@@ -1,0 +1,126 @@
+{%extends 'base.html'%}
+{% load humanize %}
+{% block pagetitle %}Trial Balance {% endblock %}
+{% block home %} {% url 'trial_balance_view' %} {% endblock %}
+{% block title %} Trial Balance {% endblock %}
+{% block content %}
+{% include 'components/title_bar.html' with title=' Trial Balance ' %}
+<style>
+    td {
+        letter-spacing: 1px;
+    }
+</style>
+<div class="card">
+    <section>
+        {% include 'accounting/filter.html' %}
+    </section>
+    <div class="card" id="printTable">
+        <center class="m-auto">
+            {% if org_global %}
+                <h2>{{org_global.org_name}}</h2> <br>
+                {% endif %}
+        </center>
+        <h2 class="text-center">Trial Balance</h2> <br>
+        <h6 class="text-primary px-6" style="text-align: right;"> Current Fiscal Year : {{current_fiscal_year}}</h6>
+        <div class="card-header p-4 m-auto">
+            <center>
+
+
+                {% if from_date and to_date %}
+                <p class="fw-bolder">For the period of : {{from_date}} &nbsp; - &nbsp; {{to_date}}</p>
+                {% else %}
+                <p class="fw-bolder">For the period of : {{first_date}} &nbsp; - &nbsp; {{last_date}}</p>
+                {% endif %}
+            </center>
+        </div>
+        <div class="card-body pt-0">
+            <div id="kt_customers_table_wrapper" class="dataTables_wrapper dt-bootstrap4 no-footer">
+                <div class="table-responsive">
+                    <table class="table align-middle table-row-dashed fs-6 gy-5 dataTable no-footer"
+                        id="kt_customers_table">
+
+
+                        <thead class="fw-bolder">
+                            <th>Ledger</th>
+                            {% if openclose %}
+                            <th>Opening</th>
+                            {% endif %}
+                            <th>Debit</th>
+                            <th>Credit</th>
+                            {% if openclose %}
+                            <th>Closing</th>
+                            {% endif %}
+                        </thead>
+                        <tbody class="fw-bold text-gray-600">
+                          
+                            {% for data in trial_balance %}
+                            <tr>
+                                <td class="fw-bolder text-primary">{{data.account_type}}</td>
+                                {% for led in data.ledgers %}
+                            <tr style="margin-left: 50px;">
+                                <td>{{led.ledger}}</td>
+                                {% if openclose %}
+                                <td>{{led.opening| intcomma }}</td>
+                                {% endif %}
+                                <td>{{led.debit|intcomma}}</td>
+                                <td>{{led.credit|intcomma}}</td>
+                                {% if openclose %}
+                                <td> {{led.closing|intcomma}} </td>
+                                {% endif %}
+                            </tr>
+                            {% endfor %}
+                            </tr>
+                            {% endfor %}
+                            <hr>
+                            <tr>
+                                <td>Total</td>
+                                {% if openclose %}
+                                <td></td>
+                                {% endif %}
+                                <td>
+                                    <p class="fw-bolder text-primary">{{total.debit_total|intcomma}}</p>
+                                </td>
+                                <td>
+                                    <p class="fw-bolder text-primary">{{total.credit_total|intcomma}}</p>
+                                </td>
+                                <td></td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                {%if object_list%}
+                {% include 'pagination.html' %}
+                {%endif%}
+            </div>
+        </div>
+    </div>
+</div>
+<button type="button" class="btn btn-success my-1 me-12" onclick="printTable('printTable');">Print</button>
+
+
+<script type="text/javascript">
+    function printTable(tableId) {
+        var printContents = document.getElementById(tableId).innerHTML
+        var originalContents = document.body.innerHTML
+
+        //Hide Elements with no-print class
+        var noPrintElements = document.querySelectorAll('no-print')
+
+        for (var i = 0; i < noPrintElements.length; i++) {
+            noPrintElements[i].style.display = 'none'
+        }
+
+        document.body.innerHTML = printContents
+
+        window.print()
+
+        document.body.innerHTML = originalContents
+
+        for (var i = 0; i < noPrintElements.length; i++) {
+            noPrintElements[i].style.display = 'block'
+        }
+    }
+</script>
+
+
+{% endblock %}
