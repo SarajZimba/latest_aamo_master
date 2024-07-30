@@ -250,6 +250,8 @@ def bulk_product_requisition(request):
 
 
 from organization.models import EndDayRecord, EndDayDailyReport
+from bill.models import Bill
+
 from datetime import date
 class ApiItemReconcilationView(APIView):
 
@@ -264,6 +266,9 @@ class ApiItemReconcilationView(APIView):
         report_total = serializer.validated_data.get("report_total")
         new_data = {'branch_id':serializer.validated_data.get('branch'),'terminal':serializer.validated_data.get('terminal'), **report_total}
         EndDayDailyReport.objects.create(**new_data)
+        Bill.objects.filter(branch=serializer.validated_data.get('branch'), terminal=serializer.validated_data.get('terminal'), is_end_day=False).update(is_end_day=True)
+
+
         return Response({'details':'success'}, 201)
     
 class CheckAllowReconcilationView(APIView):

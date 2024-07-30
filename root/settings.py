@@ -34,6 +34,7 @@ THIRD_PARTY_APPS = [
     "rest_framework_simplejwt",
     "corsheaders",
     "import_export",
+    "django_crontab",
 ]
 INSTALLED_APPS += CUSTOM_APPS + THIRD_PARTY_APPS
 
@@ -167,3 +168,9 @@ DATABASES = {
         "PORT": "3306",
     }
 }
+
+CRONJOBS = [
+    ('59 11 * * *', 'organization.cron.end_day'),
+    # ('59 11 * * *', 'organization.cron.fetch_details'),
+
+]

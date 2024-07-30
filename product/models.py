@@ -118,6 +118,7 @@ class BranchStockTracking(BaseModel):
 class BranchStock(BaseModel):
     branch = models.ForeignKey(Branch, on_delete=models.PROTECT)
     product = models.ForeignKey(Product, on_delete=models.PROTECT)
+    date = models.DateField(null=True, blank=True) 
     quantity = models.PositiveIntegerField()
 
     def __str__(self):

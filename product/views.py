@@ -464,6 +464,7 @@ class BranchStockUploadView(View):
                 quantity = int(d[2])
                 opening_date = datetime.strptime(d[0][:10], '%Y-%m-%d')
                 BranchStockTracking.objects.create(product_id=product_id, branch_id=branch_id, opening=quantity, physical=quantity, date=opening_date)
+                BranchStock.objects.create(product_id=product_id,quantity=quantity, branch_id=branch_id, date=opening_date)
             except Exception as e:
                 print(e)
 
