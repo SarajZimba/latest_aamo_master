@@ -6,7 +6,7 @@ from django.db.models.signals import post_save
 class Vendor(BaseModel):
     name = models.CharField(max_length=50)
     address = models.CharField(max_length=100, null=True, blank=True)
-    contact = models.CharField(max_length=10, null=True, blank=True)
+    contact = models.CharField(max_length=16, null=True, blank=True)
     pan_no = models.CharField(max_length=100, null=True, blank=True)
 
     def __str__(self):

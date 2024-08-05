@@ -21,6 +21,15 @@ class AccountChart(AccountBaseModel):
 
     def __str__(self):
         return self.group
+    
+class AccountLedger(AccountBaseModel):
+    account_chart = models.ForeignKey(AccountChart, on_delete=models.PROTECT)
+    ledger_name = models.CharField(max_length=200, unique=True)
+    total_value = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    is_editable = models.BooleanField(default=True)
+    
+    def __str__(self):
+        return self.ledger_name
 
 
 class CumulativeLedger(AccountBaseModel):
@@ -30,19 +39,13 @@ class CumulativeLedger(AccountBaseModel):
     value_changed = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     debit_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     credit_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    ledger = models.ForeignKey(AccountLedger, models.CASCADE, null=True, blank=True)
 
     def __str__(self):
         return self.ledger_name
 
 
-class AccountLedger(AccountBaseModel):
-    account_chart = models.ForeignKey(AccountChart, on_delete=models.PROTECT)
-    ledger_name = models.CharField(max_length=200, unique=True)
-    total_value = models.DecimalField(max_digits=12, decimal_places=2, default=0)
-    is_editable = models.BooleanField(default=True)
-    
-    def __str__(self):
-        return self.ledger_name
+
     
 """
 Signal to update Cumulative Ledger

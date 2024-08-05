@@ -55,3 +55,10 @@ urlpatterns += [
     
 
 ]
+
+from .views import EditOpeningCountView
+
+urlpatterns += [
+    # Other URL patterns
+    path('edit_opening_count/<int:ledger_id>/', EditOpeningCountView.as_view(), name='edit_opening_count'),
+]

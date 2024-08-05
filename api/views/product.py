@@ -448,3 +448,38 @@ class CategoryAPIView(APIView):
     
 
         return Response(serializer.data, 200)
+    
+
+
+class BranchWiseProduct(viewsets.ViewSet):
+    # serializer_class = ProductSerializer
+    # pagination_class = None
+
+    # def get_queryset(self):
+    #     return Product.objects.active()
+    
+    def list(self, request, *args, **kwargs):
+        
+        branch_id = kwargs.get('branch')
+        # branch = request.data['branch']
+        branch = Branch.objects.get(id=branch_id)
+        branchstock_quantity_subquery_all = BranchStock.objects.filter(
+            product=OuterRef('pk'),
+            branch=branch
+        ).values('product').annotate(total_quantity=Sum('quantity')).values('total_quantity')[:1]
+
+        # all_products = Product.objects.filter(
+        #     is_deleted = False,
+        #     is_billing_item=True
+        # )
+        # all_products = Product.objects.annotate(branchstock_total_quantity=Subquery(branchstock_quantity_subquery_all)).filter(
+        #     is_deleted = False,
+        #     branchstock_total_quantity__gt=0
+        # )
+        all_products = Product.objects.filter(
+                is_deleted = False,
+                is_billing_item=True
+            )
+        all_products_serializer = ProductSerializerList(all_products, many=True, context={"branch": branch_id})
+
+        return Response(all_products_serializer.data)

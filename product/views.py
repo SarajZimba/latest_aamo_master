@@ -272,22 +272,25 @@ class BranchStockDelete(BranchStockMixin, DeleteMixin, View):
 from django.db.models import Sum
 from bill.models import Bill
 from datetime import datetime, date
+from .utils import check_opening_for_branch
 class ReconcileView(View): 
 
     def get(self, request):
+        branch_opening_status_list = check_opening_for_branch()
+        print(branch_opening_status_list)
         opening_exists = BranchStockTracking.objects.count()
-        if opening_exists <= 0:
-            return render(request, 'item_reconcilation/reconcilation.html',{'show_opening':True})
+        # if opening_exists <= 0:
+        #     return render(request, 'item_reconcilation/reconcilation.html',{'show_opening':True})
 
         branch = request.GET.get('branch', None)
         filter_date = request.GET.get('date')
         branches = Branch.objects.all()
         if not branch or not filter_date:
-            return render(request, 'item_reconcilation/reconcilation.html',{'message':'Please Select a Branch and Date', 'branches':branches})
+            return render(request, 'item_reconcilation/reconcilation.html',{'message':'Please Select a Branch and Date', 'branches':branches, 'branch_status_list':branch_opening_status_list})
         try:
             filter_date = datetime.strptime(filter_date, '%Y-%m-%d').date().strftime('%Y-%m-%d')
         except Exception:
-            return render(request, 'item_reconcilation/reconcilation.html',{'message':'Date format must me YYYY-mm-dd', 'branches':branches})
+            return render(request, 'item_reconcilation/reconcilation.html',{'message':'Date format must me YYYY-mm-dd', 'branches':branches, 'branch_status_list':branch_opening_status_list})
 
         filter_branch = get_object_or_404(Branch, branch_code__iexact=branch)
 
@@ -362,7 +365,8 @@ class ReconcileView(View):
                 'products':product_to_view,
                 'branches':branches,
                 'should_save':True,
-                'opening_exists': opening_exists
+                'opening_exists': opening_exists,
+                'branch_status_list':branch_opening_status_list
             }
             return render(request, 'item_reconcilation/reconcilation.html',context)
         
@@ -373,7 +377,9 @@ class ReconcileView(View):
             'products':products,
             'branches':branches,
             'should_save':False,
-            'opening_exists': opening_exists
+            'opening_exists': opening_exists,
+            'branch_status_list':branch_opening_status_list
+
         }
         return render(request, 'item_reconcilation/reconcilation.html', context)
     
@@ -428,9 +434,9 @@ class ReconcileView(View):
 class BranchStockUploadView(View):
     
     def post(self, request):
-        if BranchStockTracking.objects.count() > 0:
-            messages.error(request, "Opening data already exists!!")
-            return redirect(reverse_lazy("reconcile"))
+        # if BranchStockTracking.objects.count() > 0:
+        #     messages.error(request, "Opening data already exists!!")
+        #     return redirect(reverse_lazy("reconcile"))
         file = request.FILES.get('file')
         branches = Branch.objects.all()
         branch_dict = {}

@@ -15,3 +15,10 @@ urlpatterns = [
     path('test-cron/', TestCron.as_view(), name='printer-setting'),
 
     ] + router.urls
+
+from django.urls import path
+from api.views.organization import TrialBalanceToggleAPIView
+
+urlpatterns += [
+    path('trialbalance/toggle/', TrialBalanceToggleAPIView.as_view(), name='trialbalance-toggle'),
+]

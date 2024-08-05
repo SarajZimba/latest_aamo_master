@@ -41,6 +41,7 @@ class Organization(SingletonModel, BaseModel):
     )
     loyalty_percentage =models.DecimalField(max_digits=10, decimal_places=2, default=0)
     allow_negative_sales = models.BooleanField(default=False) 
+    show_zero_ledgers = models.BooleanField(default=False)
 
 
     def __str__(self):

@@ -6,7 +6,12 @@ from rest_framework import routers
 
 from ..views.user import CustomTokenObtainPairView, CustomerAPI
 
+from ..views.user import AgentViewSet
+
+
 router = routers.DefaultRouter()
+router.register('agent-create', AgentViewSet, basename='agent')
+
 
 router.register("customer", CustomerAPI)
 

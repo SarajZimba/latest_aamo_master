@@ -31,6 +31,7 @@
                 <div class="table-responsive">
                     <div class="row">
                         <div class="col-md-6">
+                            {%comment%}
                             <table class="table align-middle table-row-dashed no-footer"
                                 id="asset_table">
                                 <thead class="text-primary fs-3 fw-bolder bg-secondary">
@@ -47,19 +48,19 @@
                                     </tr>
                                     {% for item in v %}
                                     <tr>
-                                        <td class="px-8">{{ item.ledger_name }}</td>
+                                        <td class="px-8 asset-ledgername">{{ item.ledger_name }}</td>
                                         {% if item.total_value < 0 %}
                                             <td>({{ item.total_value|get_abs }})</td>
                                         {% else %}
                                             <td>{{ item.total_value|intcomma }}</td>
                                         {% endif %}
 
+
                                     </tr>
                                     
                                     {% endfor %}
                                     {% endif %}
                                     {% endfor %}
-                                    
                                     <tr>
                                         <td class="fw-bolder">Sundry Debtors</td>
                                         <td>{{ sundry_debtors_total|intcomma }}</td>
@@ -83,6 +84,68 @@
                                     </tr>
                                 </tbody>
                             </table>
+                            {%endcomment%}
+                            <table class="table align-middle table-row-dashed no-footer" id="asset_table">
+                                <thead class="text-primary fs-3 fw-bolder bg-secondary">
+                                    <th class="col-9">Assets</th>
+                                    <th>Amount</th>
+                                </thead>
+                                <tbody class="fw-bold text-gray-600">
+                                    {% for k, v in assets.items %}
+                                        {% if k != 'Sundry Debtors' %}
+                                            <tr class="fw-bolder">
+                                                <td>{{ k }}</td>
+                                            </tr>
+                                            {% for item in v %}
+                                                <tr class="asset-row">
+                                                    <td class="px-8 asset-ledgername">{{ item.ledger_name }}</td>
+                                                    {% if item.total_value < 0 %}
+                                                        <td>({{ item.total_value|get_abs }})</td>
+                                                    {% else %}
+                                                        <td>{{ item.total_value|intcomma }}</td>
+                                                    {% endif %}
+                                                </tr>
+                                                <!-- Placeholder for subledger details -->
+                                                 {%comment%}
+                                                <tr class="subledger-details-row" style="display: none;">
+                                                    <td colspan="2">
+                                                        <!-- Subledger details will be inserted here -->
+                                                        <div class="subledger-details-content"></div>
+                                                    </td>
+                                                </tr>
+                                                {%endcomment%}
+                                            {% endfor %}
+                                        {% endif %}
+                                    {% endfor %}
+                                    <tr>
+                                        <td class="fw-bolder sundry-debtors">Sundry Debtors</td>
+                                        <td>{{ sundry_debtors_total|intcomma }}</td>
+                                    </tr>
+                                    {%comment%}
+                                    <tr class="sundry-ledger-details-row" style="display: none;">
+                                        <td colspan="2">
+                                            <!-- Subledger details will be inserted here -->
+                                            <div class="ledger-details-content"></div>
+                                        </td>
+                                    </tr>
+                                    {%endcomment%}
+                                    {% if asset_retained_earnings %}
+                                        <tr class="fw-bolder">
+                                            <td>Share Holders</td>
+                                        </tr>
+                                        <tr class="text-danger">
+                                            <td class="px-8">Retained Loss</td>
+                                            <td>{{ asset_retained_earnings|intcomma }}</td>
+                                        </tr>
+                                    {% endif %}
+                                    <tbody id="dummy-assets"></tbody>
+                                    <tr class="text-primary bg-secondary">
+                                        <td>Total</td>
+                                        <td>{{ asset_total|intcomma }}</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                            
                         </div>
                         <div class="col-md-6">
                             <table class="table align-middle table-row-dashed"
@@ -99,8 +162,8 @@
                                         <td>{{k}}</td>
                                     </tr>
                                     {% for item in v %}
-                                    <tr>
-                                        <td class="px-8">{{ item.ledger_name }}</td>
+                                    <tr class="liability-row">
+                                        <td class="px-8 liability-ledgername">{{ item.ledger_name }}</td>
                                         <td>{{ item.total_value|intcomma }}</td>
 
                                     </tr>
@@ -108,9 +171,17 @@
                                     {% endif %}
                                     {% endfor %}
                                     <tr>
-                                        <td class="fw-bolder">Sundry Creditors</td>
+                                        <td class="fw-bolder sundry">Sundry Creditors</td>
                                         <td>{{ sundry_creditors_total|intcomma }}</td>
                                     </tr>
+                                    {%comment%}
+                                    <tr class="ledger-details-row" style="display: none;">
+                                        <td colspan="2">
+                                            <!-- Subledger details will be inserted here -->
+                                            <div class="ledger-details-content"></div>
+                                        </td>
+                                    </tr>
+                                    {%endcomment%}
                                     {% if lib_retained_earnings %}
                                         <tr class="fw-bolder">
                                             <td>Share Holders</td>
@@ -137,13 +208,62 @@
 
 
     <script>
-
+document.addEventListener('DOMContentLoaded', () => {
 
         asset_table_len = document.getElementById('asset_table').rows.length
         liability_table_len = document.getElementById('liability_table').rows.length
         let dummyAssets = document.getElementById('dummy-assets')
         let dummyLiabilities = document.getElementById('dummy-liabilities')
 
+        const assetTableBody = document.querySelector('#asset_table tbody');
+        const liabilityTableBody = document.querySelector('#liability_table tbody');
+
+        function createSubLedgerPlaceholderRow() {
+        const tr = document.createElement('tr');
+        tr.classList.add('subledger-details-row');
+        tr.style.display = 'none';
+        const td = document.createElement('td');
+        td.colSpan = 2;
+        const div = document.createElement('div');
+        div.classList.add('subledger-details-content');
+        td.appendChild(div);
+        tr.appendChild(td);
+        return tr;
+    }
+        function createLedgerPlaceholderRow() {
+        const tr = document.createElement('tr');
+        tr.classList.add('ledger-details-row');
+        tr.style.display = 'none';
+        const td = document.createElement('td');
+        td.colSpan = 2;
+        const div = document.createElement('div');
+        div.classList.add('ledger-details-content');
+        td.appendChild(div);
+        tr.appendChild(td);
+        return tr;
+    }
+
+    // Add placeholder rows dynamically
+    assetTableBody.querySelectorAll('.asset-row').forEach(row => {
+        const placeholderRow = createSubLedgerPlaceholderRow();
+        row.parentNode.insertBefore(placeholderRow, row.nextSibling);
+    });
+    assetTableBody.querySelectorAll('.sundry-debtors').forEach(row => {
+        const placeholderRow = createLedgerPlaceholderRow();
+        row.parentNode.insertBefore(placeholderRow, row.nextSibling);
+    });
+
+    liabilityTableBody.querySelectorAll('.liability-row').forEach(row => {
+        const placeholderRow = createSubLedgerPlaceholderRow();
+        row.parentNode.insertBefore(placeholderRow, row.nextSibling);
+    });
+
+    liabilityTableBody.querySelectorAll('.sundry').forEach(row => {
+        console.log("sundry called  ")
+        const placeholderRow = createLedgerPlaceholderRow();
+        row.parentNode.insertBefore(placeholderRow, row.nextSibling);
+        console.log("row added")
+    });
 
         function createElementForTable(){
             const tr = document.createElement('tr')
@@ -172,8 +292,176 @@
 
         }                           
         
+        // #liability_table td.px-8
+
+// function fetchSubledgerDetails(ledgerName, row) {
+//     fetch('{% url "subledgers-list" %}', {
+//         method: 'POST',
+//         headers: {
+//             'Content-Type': 'application/json',
+//             'X-CSRFToken': '{{ csrf_token }}'  // Ensure CSRF token is included
+//         },
+//         body: JSON.stringify({ ledger: ledgerName })
+//     })
+//     .then(response => response.json())
+//     .then(data => {
+//         // Get the placeholder row to insert subledger details
+//         const placeholderRow = row.nextElementSibling;
+//         const detailsContent = placeholderRow.querySelector('.subledger-details-content');
+        
+//         // Clear previous subledger details
+//         detailsContent.innerHTML = '';
+
+//         // Add new subledger details
+//         data.forEach(subledger => {
+//             const div = document.createElement('div');
+//             div.innerHTML = `
+//                 <div>${subledger.sub_ledger_name}: ${subledger.total_value.toLocaleString()}</div>
+//             `;
+//             detailsContent.appendChild(div);
+//         });
+
+//         // Show the subledger details row
+//         placeholderRow.style.display = 'table-row';
+//     })
+//     .catch(error => console.error('Error:', error));
+// }
+
+// // Attach click event listeners to table cells with class 'asset-ledgername'
+// document.querySelectorAll('.asset-ledgername').forEach(cell => {
+//     cell.addEventListener('click', function() {
+//         console.log('Clicked');
+//         const ledgerName = this.textContent.trim();
+//         // Call fetchSubledgerDetails and pass the row of the clicked ledger
+//         fetchSubledgerDetails(ledgerName, this.parentNode);
+//     });
+// });
 
 
+// function fetchledgerDetails(groupName, row) {
+//     fetch('{% url "sundryledgers-list" %}', {
+//         method: 'POST',
+//         headers: {
+//             'Content-Type': 'application/json',
+//             'X-CSRFToken': '{{ csrf_token }}'  // Ensure CSRF token is included
+//         },
+//         body: JSON.stringify({ group: groupName })
+//     })
+//     .then(response => response.json())
+//     .then(data => {
+//         // Get the placeholder row to insert subledger details
+//         const placeholderRow = row.nextElementSibling;
+//         const detailsContent = placeholderRow.querySelector('.ledger-details-content');
+        
+//         // Clear previous subledger details
+//         detailsContent.innerHTML = '';
+
+//         // Add new subledger details
+//         data.forEach(ledger => {
+//             const div = document.createElement('div');
+//             div.innerHTML = `
+//                 <div>${ledger.ledger_name}: ${ledger.total_value.toLocaleString()}</div>
+//             `;
+//             detailsContent.appendChild(div);
+//         });
+
+//         // Show the subledger details row
+//         placeholderRow.style.display = 'table-row';
+//     })
+//     .catch(error => console.error('Error:', error));
+// }
+
+
+// document.querySelectorAll('.sundry').forEach(cell => {
+//     cell.addEventListener('click', function() {
+//         console.log('Clicked');
+//         const groupName = this.textContent.trim();
+//         // Call fetchSubledgerDetails and pass the row of the clicked ledger
+//         fetchledgerDetails(groupName, this.parentNode);
+//     });
+// });
+
+
+function fetchSubledgerDetails(ledgerName, row) {
+        fetch('{% url "subledgers-list" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': '{{ csrf_token }}'  // Ensure CSRF token is included
+            },
+            body: JSON.stringify({ ledger: ledgerName })
+        })
+        .then(response => response.json())
+        .then(data => {
+            const placeholderRow = row.nextElementSibling;
+            const detailsContent = placeholderRow.querySelector('.subledger-details-content');
+            detailsContent.innerHTML = '';
+            data.forEach(subledger => {
+                const div = document.createElement('div');
+                div.innerHTML = `
+                    <div>${subledger.sub_ledger_name}: ${subledger.total_value.toLocaleString()}</div>
+                `;
+                detailsContent.appendChild(div);
+            });
+            placeholderRow.style.display = 'table-row';
+        })
+        .catch(error => console.error('Error:', error));
+    }
+
+    // Fetch ledger details and show them in the placeholder row
+    function fetchLedgerDetails(groupName, row) {
+        fetch('{% url "sundryledgers-list" %}', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': '{{ csrf_token }}'  // Ensure CSRF token is included
+            },
+            body: JSON.stringify({ group: groupName })
+        })
+        .then(response => response.json())
+        .then(data => {
+            const placeholderRow = row.nextElementSibling;
+            console.log(placeholderRow)
+            const detailsContent = placeholderRow.querySelector('.ledger-details-content');
+            console.log("inside the fetchLedgers")
+            console.log(data)
+            detailsContent.innerHTML = '';
+            data.forEach(ledger => {
+                const div = document.createElement('div');
+                div.innerHTML = `
+                    <div>${ledger.ledger_name}: ${ledger.total_value.toLocaleString()}</div>
+                `;
+                detailsContent.appendChild(div);
+            });
+            placeholderRow.style.display = 'table-row';
+        })
+        .catch(error => console.error('Error:', error));
+    }
+
+    // Attach click event listeners to table cells with class 'asset-ledgername'
+    document.querySelectorAll('.asset-ledgername').forEach(cell => {
+        cell.addEventListener('click', function() {
+            const ledgerName = this.textContent.trim();
+            fetchSubledgerDetails(ledgerName, this.parentNode);
+        });
+    });
+    document.querySelectorAll('.liability-ledgername').forEach(cell => {
+        cell.addEventListener('click', function() {
+            const ledgerName = this.textContent.trim();
+            fetchSubledgerDetails(ledgerName, this.parentNode);
+        });
+    });
+
+    // Attach click event listeners to table cells with class 'sundry'
+    document.querySelectorAll('.sundry').forEach(cell => {
+        cell.addEventListener('click', function() {
+            console.log("Clicked")
+            const groupName = this.textContent.trim();
+            console.log(groupName)
+            fetchLedgerDetails(groupName, this.parentNode);
+        });
+    });
+});
     </script>
 
     {% endblock %}

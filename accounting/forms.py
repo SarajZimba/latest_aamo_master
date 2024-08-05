@@ -113,7 +113,8 @@ class JournalEntryForm(forms.Form):
 
 
 
-
+class OpeningCountForm(forms.Form):
+    opening_count = forms.FloatField(label='New Opening count')
     
 
 

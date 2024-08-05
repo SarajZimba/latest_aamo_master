@@ -130,17 +130,17 @@ class BillItem(BaseModel):
 
 ''' Signal for Decresing Product Stock after Sold '''
 
-# def update_stock(sender, instance, **kwargs):
-#     stock = ProductStock.objects.get(product=instance.product)
-#     try:
-#         stock.stock_quantity = stock.stock_quantity - int(instance.product_quantity)
-#         stock.save()
-#     except Exception as e:
-#         print(e)
-#     product_sold(instance=instance)
+def update_stock(sender, instance, **kwargs):
+    stock = ProductStock.objects.get(product=instance.product)
+    # try:
+    #     stock.stock_quantity = stock.stock_quantity - int(instance.product_quantity)
+    #     stock.save()
+    # except Exception as e:
+    #     print(e)
+    product_sold(instance=instance)
     
 
-# post_save.connect(update_stock, sender=BillItem)
+post_save.connect(update_stock, sender=BillItem)
 
 # def update_stock(sender, instance, **kwargs):
 #     bill = instance.bill_set.first()

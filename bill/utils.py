@@ -157,10 +157,12 @@ def product_sold(instance):
     
     sale_ledger = AccountLedger.objects.get(ledger_name='Sales')
     try:
+        print("I was in try")        
         sale_subledger = AccountSubLedger.objects.get(sub_ledger_name=subledgername, ledger=sale_ledger)
         sale_subledger.total_value += Decimal(instance.amount)
         sale_subledger.save()
     except AccountSubLedger.DoesNotExist:
+        print("I was in the exception")
         AccountSubLedger.objects.create(sub_ledger_name=subledgername, ledger=sale_ledger, total_value=Decimal(instance.amount))
 
 

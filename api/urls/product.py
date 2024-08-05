@@ -1,5 +1,5 @@
 from api.views.product import CustomerProductAPI, ProductList, ProductDetail,ProductMultipriceapi, bulk_product_requisition, ApiItemReconcilationView, CheckAllowReconcilationView,\
- ProductCreateAPIView, ProductUpdateAPIView, ProductDeleteAPIView, CategoryAPIView, ProductWithBranchStockList
+ ProductCreateAPIView, ProductUpdateAPIView, ProductDeleteAPIView, CategoryAPIView, ProductWithBranchStockList, BranchWiseProduct
 from django.urls import path
 
 from rest_framework import routers
@@ -21,7 +21,8 @@ urlpatterns = [
     path('product-update/<int:pk>/', ProductUpdateAPIView.as_view(), name='product-update'),
     path('product-delete/<int:pk>/', ProductDeleteAPIView.as_view(), name='product-delete'),
 
-    path("product-categories", CategoryAPIView.as_view(), name="product-categories")
+    path("product-categories", CategoryAPIView.as_view(), name="product-categories"),
+    path("product-branchwise/<int:branch>", BranchWiseProduct.as_view({'get':'list'}), name="branchwise-product")
 
 
 ] + router.urls

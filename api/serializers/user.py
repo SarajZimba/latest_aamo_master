@@ -147,3 +147,8 @@ class CustomerSerializer(ModelSerializer):
             "is_featured",
             "created_by",
         ]
+
+class AgentSerializer(serializers.ModelSerializer):
+    class Meta:
+        model=User
+        fields = ['full_name', 'username']

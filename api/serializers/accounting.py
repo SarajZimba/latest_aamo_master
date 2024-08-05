@@ -31,3 +31,8 @@ class AccountLedgerSerializer(serializers.ModelSerializer):
         model = AccountLedger
         fields = "ledger_name", "total_value", "id"
 
+from accounting.models import AccountSubLedger
+class AccountSubLedgerSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AccountSubLedger
+        fields = "sub_ledger_name", "total_value", "id"

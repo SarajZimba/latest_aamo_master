@@ -8,6 +8,26 @@
         border: none;
         background-color: inherit;
     }
+    .branch-select-form {
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        #uploadDiv {
+            display: none;
+            margin-top: 10px;
+        }
+        .message {
+            margin-top: 20px;
+            font-weight: bold;
+            color: #d9534f; /* Bootstrap's danger color */
+        }
+        .upload-header {
+            font-size: 1.5rem; /* Larger font size */
+            font-weight: bold; /* Bold text */
+            color: #4d98e9; /* Bootstrap's primary color */
+            margin-bottom: 20px; /* Spacing below the label */
+        }
 </style>
 
 
@@ -19,6 +39,7 @@
     </div>
     {% endfor %}
 
+{% comment %}
     {% if show_opening %}
      <div class="card-header d-flex justify-content-end">
         <form action="{% url 'branchstock_upload' %}" method="POST" enctype="multipart/form-data">
@@ -28,6 +49,43 @@
         </form>
     </div>  
    {% else %}
+{% endcomment %}
+
+<div class="container">
+    <form>
+        <div class="form-group">
+            <h5 class="upload-header">Upload Opening Count</h5>
+            <select id="branchSelect" name="branch" class="form-control" onchange="handleBranchChange()">
+                <option value="" disabled selected>-- Select Branch --</option>
+                {% for item in branch_status_list %}
+                    <option value="{{ item.branch.id }}" data-has-stock-entries="{{ item.has_stock_entries|yesno:'true,false' }}">
+                        {{ item.branch.name }}
+                    </option>
+                {% endfor %}
+            </select>
+        </div>
+    </form>
+{%comment%}
+
+
+    <div id="messageDiv"></div>
+    {%endcomment%}
+
+    <div id="uploadDiv" style="display: none;">
+        <div class="card-header d-flex justify-content-end">
+            <form action="{% url 'branchstock_upload' %}" method="POST" enctype="multipart/form-data">
+                {% csrf_token %}
+                <input type="file" name="file" required>
+                <input type="submit" value="Upload Opening Count" class="btn btn-primary">
+            </form>
+        </div>
+    </div>
+
+    <div id="messageDiv" class="message"></div>
+
+
+</div>
+
 
     <div class="card-body p-4 m-4">
 
@@ -184,8 +242,38 @@
 
         </div>
     </div>
-    {% endif %}
 </div>
 
+
+
+<script>
+        function handleBranchChange() {
+            var select = document.getElementById("branchSelect");
+            var selectedBranchId = select.value;
+            var uploadDiv = document.getElementById("uploadDiv");
+            var messageDiv = document.getElementById("messageDiv");
+
+            // Clear previous message
+            messageDiv.innerHTML = "";
+
+            if (selectedBranchId) {
+                var hasStockEntriesString = select.options[select.selectedIndex].dataset.hasStockEntries;
+                console.log(hasStockEntries)
+
+                var hasStockEntries = (hasStockEntriesString.toLowerCase() === 'true');
+
+                console.log("hasStockEntries:", hasStockEntries); // For debugging
+                if (!hasStockEntries) {
+                    uploadDiv.style.display = 'block';
+                } else {
+                    uploadDiv.style.display = 'none';
+                    messageDiv.innerHTML = "This branch already has opening count.";
+                }
+            } else {
+                uploadDiv.style.display = 'none';
+                messageDiv.innerHTML = "";
+            }
+        }
+</script>
 
 {% endblock %}

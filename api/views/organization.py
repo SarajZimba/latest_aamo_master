@@ -18,7 +18,7 @@ class OrganizationApi(ReadOnlyModelViewSet):
 
 class BranchApi(ReadOnlyModelViewSet):
     serializer_class = BranchSerializer
-    queryset = Branch.objects.active().filter(is_central_billing=False)
+    queryset = Branch.objects.active().filter(is_central_billing=False).order_by('id')
 
 from rest_framework import generics
 from organization.models import PrinterSetting
@@ -283,3 +283,17 @@ class TestCron(APIView):
     def get(self, request):
         fetch_details()
         return Response('Success', 200)
+
+# TrialBalanceToggleAPIView
+
+from organization.models import Organization
+
+class TrialBalanceToggleAPIView(APIView):
+    def post(self, request, format=None):
+        try:
+            org = Organization.objects.first()
+            org.show_zero_ledgers = not org.show_zero_ledgers
+            org.save()
+            return Response({'message': 'TrialBalnce non Zero Toggle successful'}, status=status.HTTP_200_OK)
+        except Organization.DoesNotExist:
+            return Response({'message': 'Organization not found'}, status=status.HTTP_404_NOT_FOUND)

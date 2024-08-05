@@ -1,7 +1,7 @@
 from rest_framework.response import Response
 from django.views.decorators.csrf import csrf_exempt
 from rest_framework.decorators import api_view
-from accounting.models import AccountChart, AccountLedger,TblJournalEntry, AccountSubLedger
+from accounting.models import AccountChart, AccountLedger,TblJournalEntry, AccountSubLedger, CumulativeLedger
 from purchase.models import DepreciationPool
 from rest_framework.views import APIView
 from rest_framework.generics import ListAPIView
@@ -19,11 +19,25 @@ def update_account_type(request, pk):
     ac.save()
     return Response({'Message': 'Successful'})
 
+# @api_view(['PUT'])
+# def update_account_ledger(request, pk):
+#     subledger = get_object_or_404(AccountLedger, pk=pk)
+#     subledger.ledger_name = request.data.get('content', subledger.ledger_name)
+#     subledger.save()
+#     return Response({'Message': 'Successful'})
+
 @api_view(['PUT'])
 def update_account_ledger(request, pk):
-    subledger = get_object_or_404(AccountLedger, pk=pk)
-    subledger.ledger_name = request.data.get('content', subledger.ledger_name)
-    subledger.save()
+    ledger = get_object_or_404(AccountLedger, pk=pk)
+
+    cumulativeledgers = CumulativeLedger.objects.filter(ledger_name= ledger.ledger_name)
+    ledger.ledger_name = request.data.get('content', ledger.ledger_name)
+    print(ledger.ledger_name)
+    # print(cumulativeledger)
+    for cumulativeledger in cumulativeledgers:
+        cumulativeledger.ledger_name = request.data.get('content', cumulativeledger.ledger_name)
+        cumulativeledger.save()
+    ledger.save()
     return Response({'Message': 'Successful'})
 
 @api_view(['PUT'])
@@ -241,3 +255,35 @@ class LedgersAPIView(APIView):
         serializer = AccountLedgerSerializer(ledgers, many=True)
 
         return Response(serializer.data, 200)
+
+from api.serializers.accounting import AccountSubLedgerSerializer
+class SubLedgersAPI(APIView):
+    def post(self, request, *args, **kwargs):
+        ledger_name = request.data['ledger']
+
+        ledger = AccountLedger.objects.get(ledger_name=ledger_name)
+        if Organization.objects.first().show_zero_ledgers:
+
+            subledgers = AccountSubLedger.objects.filter(ledger=ledger)
+        else:
+            subledgers = AccountSubLedger.objects.filter(ledger=ledger, total_value__gt=0.0)
+
+        serializer = AccountSubLedgerSerializer(subledgers, many=True)
+
+        return Response(serializer.data, 200)
+    
+class SundryLedgersAPI(APIView):
+    def post(self, request, *args, **kwargs):
+        group_name = request.data['group']
+
+        # ledger = AccountLedger.objects.get(account_chart__group=group_name)
+        if Organization.objects.first().show_zero_ledgers:
+
+            ledgers = AccountLedger.objects.filter(account_chart__group=group_name)
+        else:
+            ledgers = AccountLedger.objects.filter(account_chart__group=group_name, total_value__gt=0.0)
+
+        serializer = AccountLedgerSerializer(ledgers, many=True)
+
+        return Response(serializer.data, 200)
+

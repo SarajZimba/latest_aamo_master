@@ -1,84 +1,189 @@
-{%extends 'base.html'%}
+
+{% extends 'base.html' %}
 {% load humanize %}
 {% block pagetitle %} P&L Statement {% endblock %}
 {% block home %} {% url 'trial_balance_view' %} {% endblock %}
-{% block title %} P&L statement {% endblock %}
+{% block title %} P&L Statement {% endblock %}
 {% block content %}
 {% include 'components/title_bar.html' with title=' P&L Statement'  %}
-
-<style>
-    td{
-        letter-spacing: 1px;
-    }
-</style>
-
-<div class="card">
-    {% include 'components/search_filter.html' %}
-    <div class="card-body pt-0">
-        <div class="card-header p-4">
-            <center class="m-auto">
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>P&L Statement</title>
+    {% load humanize %}
+    <style>
+        td {
+            letter-spacing: 1px;
+        }
+        .placeholder-row {
+            display: none; /* Hide initially */
+        }
+        .subledger-details-content {
+            padding: 5px;
+        }
+        .subledger-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+        .subledger-table th, .subledger-table td {
+            border: 1px solid #dee2e6;
+            padding: 8px;
+            text-align: left;
+        }
+        .subledger-table th {
+            background-color: #f8f9fa;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div class="card">
+        {% include 'components/search_filter.html' %}
+        <div class="card-body pt-0">
+            <div class="card-header p-4">
+                <center class="m-auto">
                     {% if org_global %}
-                    <h2>{{org_global.org_name}}</h2> <br>
+                        <h2>{{org_global.org_name}}</h2> <br>
                     {% endif %}
                     <h2>Profit and Loss Statement</h2> <br>
                     <p>Date: ________________</p>
-            </center>
-        </div>
-        <div id="kt_customers_table_wrapper" class="dataTables_wrapper dt-bootstrap4 no-footer">
-            <div class="table-responsive">
-                <table class="table align-middle table-row-dashed fs-6 gy-5 dataTable no-footer"
-                    id="kt_customers_table">
-                    <thead class="bg-secondary">
-                        <th class="col-7">Income</th>
-                        <th>Amount</th>
-                        <th>Amount</th>
-                    </thead>
-                    <tbody class="fw-bolder text-gray-600">
-                        {% for revenue in revenues %}
-                        <tr>
-                            <td>{{revenue.title}}</td>
-                            <td>{{revenue.amount|intcomma}}</td>
-                        </tr>
-                        {% endfor %}
-                        <tr>
-                            <td></td>
-                            <td>{{revenue_total|intcomma}}</td>
-                            <td>{{revenue_total|intcomma}}</td>
-                        </tr>
-                        
-                    </tbody>
-                </table>
-
-                <table class="table align-middle table-row-dashed fs-6 gy-5 dataTable no-footer"
-                    id="kt_customers_table">
-                    <thead class="bg-secondary">
-                        <th class="col-7">Expenses</th>
-                        <th>Amount</th>
-                        <th>Amount</th>
-                    </thead>
-                    <tbody class="fw-bolder text-gray-600">
-                        {% for expense in expenses %}
-                        <tr>
-                            <td>{{expense.title}}</td>
-                            <td>{{expense.amount|intcomma}}</td>
-                        </tr>
-                        {% endfor %}
-                        <tr>
-                            <td></td>
-                            <td>{{expense_total|intcomma}}</td>
-                            <td>{{expense_total|intcomma}}</td>
-                        </tr>
-                    </tbody>
-                </table
+                </center>
             </div>
-            {%if object_list%}
-            {% include 'pagination.html' %}
-            {%endif%}
+            <div id="kt_customers_table_wrapper" class="dataTables_wrapper dt-bootstrap4 no-footer">
+                <div class="table-responsive">
+                    <table class="table align-middle table-row-dashed fs-6 gy-5 dataTable no-footer" id="asset_table">
+                        <thead class="bg-secondary">
+                            <tr>
+                                <th class="col-7">Income</th>
+                                <th>Amount</th>
+                                <th>Amount</th>
+                            </tr>
+                        </thead>
+                        <tbody class="fw-bolder text-gray-600">
+                            {% for revenue in revenues %}
+                            <tr>
+                                <td class="asset-ledgername">{{revenue.title}}</td>
+                                <td>{{revenue.amount|intcomma}}</td>
+                                <td></td>
+                            </tr>
+                            <tr class="placeholder-row">
+                                <td colspan="3">
+                                    <div class="subledger-details-content"></div>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                            <tr>
+                                <td></td>
+                                <td>{{revenue_total|intcomma}}</td>
+                                <td>{{revenue_total|intcomma}}</td>
+                            </tr>
+                        </tbody>
+                    </table>
+
+                    <table class="table align-middle table-row-dashed fs-6 gy-5 dataTable no-footer" id="liability_table">
+                        <thead class="bg-secondary">
+                            <tr>
+                                <th class="col-7">Expenses</th>
+                                <th>Amount</th>
+                                <th>Amount</th>
+                            </tr>
+                        </thead>
+                        <tbody class="fw-bolder text-gray-600">
+                            {% for expense in expenses %}
+                            <tr>
+                                <td class="liability-ledgername">{{expense.title}}</td>
+                                <td>{{expense.amount|intcomma}}</td>
+                                <td></td>
+                            </tr>
+                            <tr class="placeholder-row">
+                                <td colspan="3">
+                                    <div class="subledger-details-content"></div>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                            <tr>
+                                <td></td>
+                                <td>{{expense_total|intcomma}}</td>
+                                <td>{{expense_total|intcomma}}</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                {% if object_list %}
+                    {% include 'pagination.html' %}
+                {% endif %}
+            </div>
         </div>
     </div>
-</div>
 
-<script>
-</script>
+    <script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const assetTableBody = document.querySelector('#asset_table tbody');
+        const liabilityTableBody = document.querySelector('#liability_table tbody');
 
-{% endblock %}
+        function fetchSubledgerDetails(ledgerName, row) {
+            fetch('{% url "subledgers-list" %}', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': '{{ csrf_token }}'  // Ensure CSRF token is included
+                },
+                body: JSON.stringify({ ledger: ledgerName })
+            })
+            .then(response => response.json())
+            .then(data => {
+                const placeholderRow = row.nextElementSibling;
+                const detailsContent = placeholderRow.querySelector('.subledger-details-content');
+                detailsContent.innerHTML = ''; // Clear previous content
+                
+                // Create subledger table
+                const table = document.createElement('table');
+                table.classList.add('subledger-table');
+                const thead = document.createElement('thead');
+                thead.innerHTML = `
+                    <tr>
+                        <th>Sub Ledger Name</th>
+                        <th>Total Value</th>
+                    </tr>
+                `;
+                table.appendChild(thead);
+                const tbody = document.createElement('tbody');
+                data.forEach(subledger => {
+                    const tr = document.createElement('tr');
+                    tr.innerHTML = `
+                        <td>${subledger.sub_ledger_name}</td>
+                        <td>${subledger.total_value.toLocaleString()}</td>
+                    `;
+                    tbody.appendChild(tr);
+                });
+                table.appendChild(tbody);
+                detailsContent.appendChild(table);
+
+                placeholderRow.style.display = 'table-row'; // Show the placeholder row
+            })
+            .catch(error => console.error('Error:', error));
+        }
+
+        // Attach click event listeners to table cells with class 'asset-ledgername'
+        document.querySelectorAll('.asset-ledgername').forEach(cell => {
+            cell.addEventListener('click', function() {
+                const ledgerName = this.textContent.trim();
+                fetchSubledgerDetails(ledgerName, this.parentNode);
+            });
+        });
+
+        // Attach click event listeners to table cells with class 'liability-ledgername'
+        document.querySelectorAll('.liability-ledgername').forEach(cell => {
+            cell.addEventListener('click', function() {
+                const ledgerName = this.textContent.trim();
+                fetchSubledgerDetails(ledgerName, this.parentNode);
+            });
+        });
+    });
+    </script>
+</body>
+</html>
+{%endblock%}
