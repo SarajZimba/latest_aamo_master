@@ -272,6 +272,22 @@ class SubLedgersAPI(APIView):
 
         return Response(serializer.data, 200)
     
+from api.serializers.accounting import AccountSubLedgerSerializer
+class ExpenseSubLedgersAPI(APIView):
+    def post(self, request, *args, **kwargs):
+        ledger_id = request.data['ledger']
+
+        ledger = AccountLedger.objects.get(id=ledger_id)
+        if Organization.objects.first().show_zero_ledgers:
+
+            subledgers = AccountSubLedger.objects.filter(ledger=ledger)
+        else:
+            subledgers = AccountSubLedger.objects.filter(ledger=ledger)
+
+        serializer = AccountSubLedgerSerializer(subledgers, many=True)
+
+        return Response(serializer.data, 200)
+    
 class SundryLedgersAPI(APIView):
     def post(self, request, *args, **kwargs):
         group_name = request.data['group']

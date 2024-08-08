@@ -39,7 +39,7 @@
     <div class="card-header p-4 m-auto">
         <center>
             <h2>Journal Voucher</h2> <br>
-            <p>Date: ________________</p>
+            <!-- <p>Date: ________________</p> -->
         </center>
     </div>
     <div class="card-body pt-0">
@@ -55,7 +55,16 @@
                 </form>
                 <form method="POST">
                     <table class="table table-bordered align-middle " id="kt_customers_table">
-
+                        <!-- <div class="container">
+                            <div class="row justify-content-center">
+                                <div class="col-md-2">
+                                    <div class="form-group">
+                                        <center><label for="entry_date">Entry Date:</label></center>
+                                        <input type="date" class="form-control" name="entry_date" id="entry_date" required value={{form.journal_date}}>
+                                    </div>
+                                </div>
+                            </div>
+                        </div> -->
                         <thead>
                             <tr>
                                 <th class="col-md-2">Ledger</th>
@@ -74,11 +83,12 @@
                             {% csrf_token %}
 
                         <tbody id="form-debit-row">
+                            {% for debit_entry in form.debit_ledger %}
                             <tr>
                                 <td class="col-md-2">
                                     <select class="ledger-select form-control" id="1_ledger_select" name="debit_ledger"
                                         required onchange="ledgerChange(this)">
-                                        <option value="------" selected>-----</option>
+                                        <option value={{debit_entry.id}}>{{debit_entry.ledger_name}}</option>
                                         {% for ledger in ledgers%}
                                         <option value={{ledger.id}}>{{ledger.ledger_name}}</option>
                                         {% endfor %}
@@ -87,27 +97,29 @@
                                 <td class="col-md-2">
                                     <select class="subledger-select form-control" id="1_subledger_select"
                                         name="debit_subledger">
-                                        <option value="------" selected>-----</option>
-                                        {% for sub in sub_ledgers%}
+                                        <option data-ledgerid="{{debit_entry.id}}" value={{debit_entry.subledger_id}}>{{debit_entry.subledger_name}}</option>
+                                        {% for sub in debit_entry.subledgers%}
                                         <option data-ledgerid="{{sub.ledger.pk}}" value={{sub.id}}>
-                                            {{sube}}</option>
+                                            {{sub.subledger_name}}</option>
                                         {% endfor %}
                                     </select>
                                 </td>
                                 <td class="col-md-3"><input type="text" data-side="dr" id="1_particular_input"
-                                        name="debit_particular" required></td>
+                                        name="debit_particular" required value="{{debit_entry.particular}}"></td>
                                 <td class="col-md-2"><input type="number"  step="0.01" class="debit_subtotal fw-bolder"
-                                        onkeyup="calculateDebitTotal()" min="0" name="debit_amount" required></td>
+                                        onkeyup="calculateDebitTotal()" min="0" name="debit_amount" required value="{{debit_entry.debit_amount}}"></td>
                                 <td class="col-md-2">x x x x x</td>
                             </tr>
+                            {% endfor %}
                         </tbody>
 
                         <tbody id="form-credit-row">
+                            {% for credit_entry in form.credit_ledger %}
                             <tr>
                                 <td class="col-md-2">
                                     <select class="ledger-select form-control" id="2_ledger_select" name="credit_ledger"
                                         required onchange="ledgerChange(this)">
-                                        <option value="------" selected>-----</option>
+                                        <option  value={{credit_entry.id}}>{{credit_entry.ledger_name}}</option>
                                         {% for ledger in ledgers%}
                                         <option value={{ledger.id}}>{{ledger.ledger_name}}</option>
                                         {% endfor %}
@@ -117,17 +129,18 @@
                                     <select class="subledger-select form-control" id="2_subledger_select"
                                         name="credit_subledger">
                                         <option value="------" selected>-----</option>
-                                        {% for sub in sub_ledgers%}
-                                        <option value={{sub.id}}>{{sub}}</option>
+                                        {% for sub in credit_entry.subledgers%}
+                                        <option value={{sub.id}}>{{sub.subledger_name}}</option>
                                         {% endfor %}
                                     </select>
                                 </td>
                                 <td class="col-md-4"><input type="text" data-side="cr" id="2_particular_input"
-                                        name="credit_particular" required></td>
+                                        name="credit_particular" required value="{{credit_entry.particular}}"></td>
                                 <td class="col-md-2">x x x x x</td>
                                 <td class="col-md-2"><input type="number" step="0.01" class="credit_subtotal fw-bolder"
-                                        onkeyup="calculateCreditTotal()" min="0" name="credit_amount" required></td>
+                                        onkeyup="calculateCreditTotal()" min="0" name="credit_amount" required value="{{credit_entry.credit_amount}}"></td>
                             </tr>
+                            {% endfor %}
                         </tbody>
 
                         <div class="row">
@@ -136,13 +149,17 @@
                                 <td class="col-md-2"></td>
                                 <td class="col-md-3"></td>
                                 <td class="col-md-2 pt-5">
-                                    <p class="text-primary fw-bolder" id="total-debit">0</p>
+                                    <p class="text-primary fw-bolder" id="total-debit">{{journal_entry.journal_total}}</p>
                                 </td>
                                 <td class="col-md-2 pt-5">
-                                    <p class="text-primary fw-bolder" id="total-credit">0</p></td>
+                                    <p class="text-primary fw-bolder" id="total-credit">{{journal_entry.journal_total}}</p></td>
                             </tr>
                             <tr>
                                 <td>
+                                        <!-- <div class="form-group m-2">
+                                            <label for="narration">Narration:</label>
+                                            <textarea name="narration" id="narration" rows="5" cols="50" placeholder="Enter narration">{{journal_entry.narration}}</textarea>
+                                        </div> -->
                                     <button type="submit" class="btn btn-primary">Submit</button>
                                 </td>
                             </tr>

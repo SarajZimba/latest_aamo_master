@@ -32,46 +32,42 @@ class AccountLedger(AccountBaseModel):
         return self.ledger_name
 
 
-class CumulativeLedger(AccountBaseModel):
-    account_chart = models.ForeignKey(AccountChart, on_delete=models.PROTECT)
-    ledger_name = models.CharField(max_length=200)
-    total_value = models.DecimalField(max_digits=12, decimal_places=2, default=0)
-    value_changed = models.DecimalField(max_digits=12, decimal_places=2, default=0)
-    debit_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
-    credit_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
-    ledger = models.ForeignKey(AccountLedger, models.CASCADE, null=True, blank=True)
 
-    def __str__(self):
-        return self.ledger_name
 
 
 
     
-"""
-Signal to update Cumulative Ledger
-"""
-@receiver(post_save, sender=AccountLedger)
-def update_cumulative_ledger(sender, instance, created, **kwargs):
-    if created:
-        CumulativeLedger.objects.create(account_chart=instance.account_chart, ledger_name=instance.ledger_name, total_value=instance.total_value, value_changed=0)
-    else:
-        ledger = CumulativeLedger.objects.filter(ledger_name=instance.ledger_name).last()
-        value_changed = instance.total_value - ledger.total_value
-        if instance.account_chart.account_type in ['Asset', 'Expense']:
-            if value_changed > 0:
-                CumulativeLedger.objects.create(account_chart=instance.account_chart, ledger_name=instance.ledger_name, total_value=instance.total_value, value_changed=value_changed, debit_amount=abs(value_changed))
-            else:
-                CumulativeLedger.objects.create(account_chart=instance.account_chart, ledger_name=instance.ledger_name, total_value=instance.total_value, value_changed=value_changed, credit_amount=abs(value_changed))
-        else:
-            if value_changed > 0:
-                CumulativeLedger.objects.create(account_chart=instance.account_chart, ledger_name=instance.ledger_name, total_value=instance.total_value, value_changed=value_changed, credit_amount=abs(value_changed))
-            else:
-                CumulativeLedger.objects.create(account_chart=instance.account_chart, ledger_name=instance.ledger_name, total_value=instance.total_value, value_changed=value_changed, debit_amount=abs(value_changed))
+# """
+# Signal to update Cumulative Ledger
+# """
+# @receiver(post_save, sender=AccountLedger)
+# def update_cumulative_ledger(sender, instance, created, **kwargs):
+#     if created:
+#         if instance.account_chart.account_type in ['Asset', 'Expense']:
+#             CumulativeLedger.objects.create(account_chart=instance.account_chart, ledger_name=instance.ledger_name, total_value=instance.total_value, value_changed=instance.total_value, ledger=instance, debit_amount=instance.total_value)
+#         else:
+#             CumulativeLedger.objects.create(account_chart=instance.account_chart, ledger_name=instance.ledger_name, total_value=instance.total_value, value_changed=instance.total_value, ledger=instance, credit_amount=instance.total_value)
+#         if instance.account_chart.group == "Sundry Debtors":
+#             journal = TblJournalEntry.objects.create(employee_name=f"From Debtors form {instance.ledger_name}", journal_total=instance.total_value)
+#             TblDrJournalEntry.objects.create(ledger=instance, debit_amount=instance.total_value, particulars=f"Automatic: {instance.ledger_name} a/c Dr", journal_entry=journal)
 
-# @receiver(pre_delete, sender=AccountLedger)
-# def delete_cumulative_ledger(sender, instance, **kwargs):
-#     # Delete the corresponding CumulativeLedger entry when an AccountLedger is deleted.
-#     CumulativeLedger.objects.filter(ledger_name=instance.ledger_name).delete()   
+
+#         if instance.account_chart.group == "Sundry Creditors":
+#             journal = TblJournalEntry.objects.create(employee_name=f"From Creditors form {instance.ledger_name}", journal_total=instance.total_value)
+#             TblCrJournalEntry.objects.create(ledger=instance, credit_amount=instance.total_value, particulars=f"Automatic: To {instance.ledger_name}", journal_entry=journal)
+#     else:
+#         ledger = CumulativeLedger.objects.filter(ledger_name=instance).last()
+#         value_changed = instance.total_value - ledger.total_value
+#         if instance.account_chart.account_type in ['Asset', 'Expense']:
+#             if value_changed > 0:
+#                 CumulativeLedger.objects.create(account_chart=instance.account_chart, ledger_name=instance.ledger_name, total_value=instance.total_value, value_changed=value_changed, debit_amount=abs(value_changed), ledger=instance)
+#             else:
+#                 CumulativeLedger.objects.create(account_chart=instance.account_chart, ledger_name=instance.ledger_name, total_value=instance.total_value, value_changed=value_changed, credit_amount=abs(value_changed), ledger=instance)
+#         else:
+#             if value_changed > 0:
+#                 CumulativeLedger.objects.create(account_chart=instance.account_chart, ledger_name=instance.ledger_name, total_value=instance.total_value, value_changed=value_changed, credit_amount=abs(value_changed), ledger=instance)
+#             else:
+#                 CumulativeLedger.objects.create(account_chart=instance.account_chart, ledger_name=instance.ledger_name, total_value=instance.total_value, value_changed=value_changed, debit_amount=abs(value_changed), ledger=instance) 
 
 
 class AccountSubLedger(AccountBaseModel):
@@ -93,7 +89,18 @@ class TblJournalEntry(AccountBaseModel):
     def __str__(self):
         return 'Journal Entry'
 
+class CumulativeLedger(AccountBaseModel):
+    account_chart = models.ForeignKey(AccountChart, on_delete=models.PROTECT)
+    ledger_name = models.CharField(max_length=200)
+    total_value = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    value_changed = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    debit_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    credit_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    ledger = models.ForeignKey(AccountLedger, models.CASCADE, null=True, blank=True)
+    journal = models.ForeignKey(TblJournalEntry, models.CASCADE, null=True, blank=True)
 
+    def __str__(self):
+        return self.ledger_name
 
 class TblCrJournalEntry(AccountBaseModel):
     ledger = models.ForeignKey(AccountLedger, on_delete=models.PROTECT, related_name='credit_entries')
@@ -133,6 +140,7 @@ class Expense(AccountBaseModel):
     
 @receiver(post_save, sender=Expense)
 def create_journal_for_expense(sender, instance, created, **kwargs):
+    from bill.utils import update_cumulative_ledger_bill
     if created:
     
         journal = TblJournalEntry.objects.create(employee_name="From expense form", journal_total=instance.amount)
@@ -140,14 +148,14 @@ def create_journal_for_expense(sender, instance, created, **kwargs):
         TblCrJournalEntry.objects.create(ledger=instance.credit_ledger, credit_amount=instance.amount, particulars=f"Automatic: To {instance.credit_ledger.ledger_name}", journal_entry=journal)
         instance.ledger.total_value += instance.amount
         instance.ledger.save()
-
-        if instance.sub_ledger:
-            instance.sub_ledger.total_value += instance.amount
-            instance.sub_ledger.save()
+        update_cumulative_ledger_bill(instance.ledger)
+        # if instance.sub_ledger:
+        #     instance.sub_ledger.total_value += instance.amount
+        #     instance.sub_ledger.save()
 
         instance.credit_ledger.total_value -= instance.amount
         instance.credit_ledger.save()
-
+        update_cumulative_ledger_bill(instance.credit_ledger)
 
 
     
@@ -207,4 +215,8 @@ class FiscalYearLedger(AccountBaseModel):
 
 
 
-
+class AccountSubLedgerTracking(AccountBaseModel):
+    subledger = models.ForeignKey(AccountSubLedger, models.CASCADE, null=True, blank=True)
+    prev_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    new_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    value_changed = models.DecimalField(max_digits=12, decimal_places=2, default=0)

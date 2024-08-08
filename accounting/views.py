@@ -96,8 +96,14 @@ class AccountLedgerList(AccountLedgerMixin, ListView):
 class AccountLedgerDetail(AccountLedgerMixin, DetailView):
     template_name = "accounting/accountledger_detail.html"
 
+from bill.utils import update_cumulative_ledger_bill, create_cumulative_ledger_bill
 class AccountLedgerCreate(AccountLedgerMixin, CreateView):
     template_name = "accounting/create.html"
+
+    def form_valid(self, form):
+        response = super().form_valid(form)
+        create_cumulative_ledger_bill(self.object)
+        return response
 
 class AccountLedgerUpdate(AccountLedgerMixin, UpdateView):
     template_name = "accounting/update.html"
@@ -125,10 +131,16 @@ class AccountLedgerUpdate(AccountLedgerMixin, UpdateView):
         context["opening_exists"] = opening_exists
         # print(f"This is the ledger id {ledger_id}")
         return context
+    
+    def form_valid(self, form):
+        response = super().form_valid(form)
+        update_cumulative_ledger_bill(self.object)
+        return response
 
 class AccountLedgerDelete(AccountChartMixin, DeleteMixin, View):
     pass
 
+from django.db import transaction
 
 from .forms import AccountSubLedgerForm
 class AccountSubLedgerCreate(IsAdminMixin, CreateView):
@@ -136,10 +148,80 @@ class AccountSubLedgerCreate(IsAdminMixin, CreateView):
     form_class = AccountSubLedgerForm
     success_url = reverse_lazy('accountchart_list')
 
+    def form_valid(self, form):
+        # Use a transaction to ensure atomicity
+        with transaction.atomic():
+            # Get the form data
+            response = super().form_valid(form)
+            
+            # Get the newly created subledger object
+            subledger = self.object
+            
+            # Since it's a new creation, prev_value is 0
+            prev_value = 0
+            new_value = subledger.total_value
+            
+            # Create a tracking entry for the new subledger
+            AccountSubLedgerTracking.objects.create(
+                subledger=subledger,
+                prev_amount=prev_value,
+                new_amount=new_value,
+                value_changed=new_value - prev_value
+            )
+
+            ledger = subledger.ledger
+
+            ledger.total_value = ledger.total_value + new_value
+            ledger.save()
+            
+            return response
+
 class AccountSubLedgerUpdate(IsAdminMixin, UpdateView):
     form_class = AccountSubLedgerForm
     queryset = AccountSubLedger.objects.all()
     template_name = "update.html"
+    success_url = reverse_lazy('accountchart_list')
+
+    def form_valid(self, form):
+        # Use a transaction to ensure atomicity
+        with transaction.atomic():
+            pk = self.kwargs['pk']
+            
+            # Fetch the original object from the database
+            subledger = get_object_or_404(AccountSubLedger, pk=pk)
+            
+            # Capture the previous total value from the original object
+            prev_value = subledger.total_value
+            # Fetch the previous total value from the object before the update
+            prev_value = subledger.total_value
+            print(prev_value)
+            # Apply the form data to the object
+            response = super().form_valid(form)
+            
+            subledger.refresh_from_db()
+            # The object has been updated with the form data
+            # Fetch the new total value after saving
+            new_value = subledger.total_value
+            
+
+
+            value_changed=new_value - prev_value
+
+            print(value_changed)
+            # Create a tracking entry for the subledger
+            subledgertracking = AccountSubLedgerTracking.objects.create(
+                subledger=subledger,
+                prev_amount=prev_value,
+                new_amount=new_value,
+                value_changed= value_changed
+            )
+            ledger = subledger.ledger
+            ledger_prev_value = ledger.total_value
+            if value_changed:
+                # ledger_prev_value
+                ledger.total_value = ledger_prev_value + value_changed
+                ledger.save()
+            return response
 
 from .models import Expense
 from .forms import ExpenseForm
@@ -156,11 +238,74 @@ class ExpenseList(ExpenseMixin, ListView):
 class ExpenseDetail(ExpenseMixin, DetailView):
     template_name = "expense/expense_detail.html"
 
-class ExpenseCreate(ExpenseMixin, CreateView):
+# class ExpenseCreate(ExpenseMixin, CreateView):
+#     template_name = "accounting/expenses/expenses_create.html"
+
+from django.shortcuts import render, redirect
+from django.urls import reverse_lazy
+from django.views import View
+from .models import Expense, AccountLedger, AccountSubLedger
+from django.http import JsonResponse
+from rest_framework.views import APIView
+from rest_framework.response import Response
+# from .serializers import AccountSubLedgerSerializer
+from accounting.models import AccountSubLedgerTracking
+import decimal
+class ExpenseCreate(View):
     template_name = "accounting/expenses/expenses_create.html"
+    success_url = reverse_lazy('expenses_list')
+    def get(self, request, *args, **kwargs):
+        context = {
+            'ledgers': AccountLedger.objects.filter(account_chart__account_type="Expense").exclude(ledger_name='Inventory Expenses'),
+            'credit_ledgers': AccountLedger.objects.filter(account_chart__group="Liquid Asset"),
+        }
+        return render(request, self.template_name, context)
+
+    def post(self, request, *args, **kwargs):
+        ledger_id = request.POST.get('ledger')
+        sub_ledger_id = request.POST.get('sub_ledger')
+        credit_ledger_id = request.POST.get('credit_ledger')
+        amount = int(request.POST.get('amount'))
+        description = request.POST.get('description')
+
+        if ledger_id != '':
+            ledger = AccountLedger.objects.get(id=ledger_id)
+        else:
+            ledger= None
+        if sub_ledger_id != '' :
+            sub_ledger = AccountSubLedger.objects.get(id=sub_ledger_id, ledger = ledger)
+
+            # sub = AccountSubLedger.objects.get(sub_ledger_name=subledgername, ledger=debit_account)
+            prev_value = sub_ledger.total_value
+            subledgertracking = AccountSubLedgerTracking.objects.create(subledger = sub_ledger, prev_amount= prev_value)
+            sub_ledger.total_value += decimal.Decimal(int(amount))
+            sub_ledger.save()
+            subledgertracking.new_amount=sub_ledger.total_value
+            subledgertracking.value_changed = sub_ledger.total_value - prev_value
+            subledgertracking.save()
+        else:
+            sub_ledger = None
+        if credit_ledger_id != '':
+            credit_ledger = AccountLedger.objects.get(id=credit_ledger_id)
+        else:
+            credit_ledger = None
+        Expense.objects.create(
+            ledger=ledger,
+            sub_ledger=sub_ledger,
+            credit_ledger=credit_ledger,
+            amount=amount,
+            description=description
+        )
+
+
+        return redirect(reverse_lazy('expenses_list'))
+
+
 
 class ExpenseUpdate(ExpenseMixin, UpdateView):
     template_name = "update.html"
+
+
 
 class ExpenseDelete(ExpenseMixin, DeleteMixin, View):
     pass
@@ -168,6 +313,7 @@ class ExpenseDelete(ExpenseMixin, DeleteMixin, View):
 
 
 from .models import TblDrJournalEntry, TblCrJournalEntry, TblJournalEntry, AccountSubLedger
+from .utils import update_cumulative_ledger_journal, create_cumulative_ledger_journal
 
 class JournalEntryCreateView(IsAdminMixin,View):
 
@@ -185,87 +331,6 @@ class JournalEntryCreateView(IsAdminMixin,View):
             except ValueError:
                 subled = AccountSubLedger.objects.create(sub_ledger_name=subledger, is_editable=True, ledger=ledger)
         return subled
-    
-    # def post(self, request):
-    #     data = request.POST
-    #     debit_ledgers = data.getlist('debit_ledger', [])
-    #     debit_particulars = data.getlist('debit_particular', [])
-    #     debit_amounts = data.getlist('debit_amount', [])
-    #     debit_subledgers = data.getlist('debit_subledger', [])
-
-    #     credit_ledgers = data.getlist('credit_ledger', [])
-    #     credit_particulars = data.getlist('credit_particular', [])
-    #     credit_amounts = data.getlist('credit_amount', [])
-    #     credit_subledgers = data.getlist('credit_subledger', [])
-    #     print(credit_ledgers)
-
-    #     ledgers = AccountLedger.objects.all()
-    #     sub_ledgers = AccountSubLedger.objects.all()
-
-    #     try:
-    #         parsed_debitamt = (lambda x: [D(i) for i in x])(debit_amounts)
-    #         parsed_creditamt = (lambda x: [D(i) for i in x])(credit_amounts)
-    #     except Exception:
-    #         messages.error(request, "Please Enter valid amount")
-    #         return render(request, 'accounting/journal/journal_entry_create.html', {'ledgers':ledgers, 'sub_ledgers':sub_ledgers})
-        
-    #     debit_sum, credit_sum = sum(parsed_debitamt), sum(parsed_creditamt)
-    #     if debit_sum != credit_sum:
-    #         messages.error(request, "Debit Total and Credit Total must be equal")
-    #         return render(request, 'accounting/journal/journal_entry_create.html', {'ledgers':ledgers, 'sub_ledgers':sub_ledgers})
-
-    #     for dr in debit_ledgers:
-    #         if dr.startswith('-'):
-    #             messages.error(request, "Ledger must be selected")
-    #             return render(request, 'accounting/journal/journal_entry_create.html', {'ledgers':ledgers, 'sub_ledgers':sub_ledgers}) 
-        
-    #     credit_to_debit_mapping = {}
-
-    #     journal_entry = TblJournalEntry.objects.create(employee_name=request.user.username, journal_total=debit_sum)
-    #     for i in range(len(debit_ledgers)):
-    #         debit_ledger_id = int(debit_ledgers[i])
-    #         debit_ledger = AccountLedger.objects.get(pk=debit_ledger_id)
-    #         debit_particular = debit_particulars[i]
-    #         debit_amount = D(debit_amounts[i])
-    #         subledger = self.get_subledger( debit_subledgers[i], debit_ledger)
-    #         debit_ledger_type = debit_ledger.account_chart.account_type
-    #         TblDrJournalEntry.objects.create(ledger=debit_ledger, journal_entry=journal_entry, particulars=debit_particular, debit_amount=debit_amount, sub_ledger=subledger)
-    #         if debit_ledger_type in ['Asset', 'Expense']:
-    #             debit_ledger.total_value =debit_ledger.total_value + debit_amount
-    #             debit_ledger.save()
-    #             if subledger:
-    #                 subledger.total_value = subledger.total_value + debit_amount
-    #                 subledger.save()
-
-    #         elif debit_ledger_type in ['Liability', 'Revenue', 'Equity']:
-    #             debit_ledger.total_value = debit_ledger.total_value - debit_amount
-    #             debit_ledger.save()
-    #             if subledger:
-    #                 subledger.total_value = subledger.total_value - debit_amount
-    #                 subledger.save()
-
-    #     for i in range(len(credit_ledgers)):
-    #         credit_ledger_id = int(credit_ledgers[i])
-    #         credit_ledger = AccountLedger.objects.get(pk=credit_ledger_id)
-    #         credit_particular = credit_particulars[i]
-    #         credit_amount = D(credit_amounts[i])
-    #         subledger = self.get_subledger( credit_subledgers[i], credit_ledger)
-    #         credit_ledger_type = credit_ledger.account_chart.account_type
-    #         TblCrJournalEntry.objects.create(ledger=credit_ledger, journal_entry=journal_entry, particulars=credit_particular, credit_amount=credit_amount, sub_ledger=subledger,paidfrom_ledger=credit_ledger)
-    #         if credit_ledger_type in ['Asset', 'Expense']:
-    #             credit_ledger.total_value = credit_ledger.total_value - credit_amount
-    #             credit_ledger.save()
-    #             if subledger:
-    #                 subledger.total_value = subledger.total_value - credit_amount
-    #                 subledger.save()
-    #         elif credit_ledger_type in ['Liability', 'Revenue', 'Equity']:
-    #             credit_ledger.total_value = credit_ledger.total_value + credit_amount
-    #             credit_ledger.save()
-    #             if subledger:
-    #                 subledger.total_value = subledger.total_value + credit_amount
-    #                 subledger.save()
-
-    #     return redirect('journal_list')
 
     def post(self, request):
         data = request.POST
@@ -317,15 +382,29 @@ class JournalEntryCreateView(IsAdminMixin,View):
             if credit_ledger_type in ['Asset', 'Expense']:
                 credit_ledger.total_value = credit_ledger.total_value - credit_amount
                 credit_ledger.save()
+                update_cumulative_ledger_journal(credit_ledger, journal_entry)
                 if subledger:
+                    prev_value = subledger.total_value
+                    subledgertracking = AccountSubLedgerTracking.objects.create(subledger = subledger, prev_amount= prev_value)
+
                     subledger.total_value = subledger.total_value - credit_amount
                     subledger.save()
+                    subledgertracking.new_amount=subledger.total_value
+                    subledgertracking.value_changed = subledger.total_value - prev_value
+                    subledgertracking.save()
             elif credit_ledger_type in ['Liability', 'Revenue', 'Equity']:
                 credit_ledger.total_value = credit_ledger.total_value + credit_amount
                 credit_ledger.save()
+                update_cumulative_ledger_journal(credit_ledger, journal_entry)
                 if subledger:
+                    prev_value = subledger.total_value
+                    subledgertracking = AccountSubLedgerTracking.objects.create(subledger = subledger, prev_amount= prev_value)
+
                     subledger.total_value = subledger.total_value + credit_amount
                     subledger.save()
+                    subledgertracking.new_amount=subledger.total_value
+                    subledgertracking.value_changed = subledger.total_value - prev_value
+                    subledgertracking.save()
 
         
         for i in range(len(debit_ledgers)):
@@ -339,15 +418,29 @@ class JournalEntryCreateView(IsAdminMixin,View):
             if debit_ledger_type in ['Asset', 'Expense']:
                 debit_ledger.total_value = debit_ledger.total_value + debit_amount
                 debit_ledger.save()
+                update_cumulative_ledger_journal(debit_ledger, journal_entry)
                 if subledger:
+                    prev_value = subledger.total_value
+                    subledgertracking = AccountSubLedgerTracking.objects.create(subledger = subledger, prev_amount= prev_value)
+
                     subledger.total_value = subledger.total_value + debit_amount
                     subledger.save()
+                    subledgertracking.new_amount=subledger.total_value
+                    subledgertracking.value_changed = subledger.total_value - prev_value
+                    subledgertracking.save()
             elif debit_ledger_type in ['Liability', 'Revenue', 'Equity']:
                 debit_ledger.total_value = debit_ledger.total_value - debit_amount
                 debit_ledger.save()
+                update_cumulative_ledger_journal(journal_entry)
                 if subledger:
+                    prev_value = subledger.total_value
+                    subledgertracking = AccountSubLedgerTracking.objects.create(subledger = subledger, prev_amount= prev_value)
+
                     subledger.total_value = subledger.total_value - debit_amount
                     subledger.save()
+                    subledgertracking.new_amount=subledger.total_value
+                    subledgertracking.value_changed = subledger.total_value - prev_value
+                    subledgertracking.save()
 
         return redirect('journal_list')
 
@@ -413,401 +506,8 @@ class JournalEntryView(IsAdminMixin, View):
         return render(request, 'accounting/journal/journal_list.html',  {'journal_entries': journal_entries})
 
 
-
-
-
-# class TrialBalanceView(IsAdminMixin, View):
-
-#     def filtered_view(self, from_date, to_date):
-#         filtered_transactions = CumulativeLedger.objects.filter(created_at__range=[from_date, to_date])
-#         filtered_sum = filtered_transactions.values('ledger_name', 'account_chart__account_type', 'account_chart__group').annotate(Sum('value_changed'))
-#         # print(filtered_sum)
-#         trial_balance = []
-
-#         total = {'debit_total':0, 'credit_total':0}
-
-#         for fil in filtered_sum:
-#             data = {}
-#             data['ledger'] = fil['ledger_name']
-#             account_type = fil['account_chart__account_type']
-#             account_group = fil['account_chart__group']
-#             # print(account_group)
-#             if account_type in ['Asset', 'Expense']:
-#                 data['actual_value'] = fil['value_changed__sum']
-#                 if fil['value_changed__sum'] < 0:
-#                     val = abs(fil['value_changed__sum'])
-#                     data['credit'] = val
-#                     data['debit'] = '-'
-#                     total['credit_total'] += val
-#                 else:
-#                     val = fil['value_changed__sum']
-#                     data['debit'] = val
-#                     data['credit'] = '-'
-#                     total['debit_total'] += val
-#             else:
-#                 if fil['value_changed__sum'] < 0:
-#                     val = abs(fil['value_changed__sum'])
-#                     data['debit'] = val
-#                     data['credit'] = '-'
-#                     total['debit_total'] += val
-#                 else:
-#                     val = fil['value_changed__sum']
-#                     data['credit'] = val
-#                     data['debit'] = '-'
-#                     total['credit_total'] += val
-
-#             if not any(d['account_type'] == account_type for d in trial_balance):
-#                     trial_balance.append(
-#                         {
-#                             'account_type': account_type,
-#                             'ledgers' : [data],
-#                             'group' : account_group,
-#                         }
-#                     )
-#             else:
-#                 for tb in trial_balance:
-#                     if tb['account_type'] == account_type:
-#                         # print(data)
-#                         tb['ledgers'].append(data)
-#                         break
-
-#         return trial_balance, total
-
-#     def detail_view(self, from_date, to_date):
-#         all_ledgers_list = AccountLedger.objects.values_list('ledger_name', flat=True)
-#         before_transactions = CumulativeLedger.objects.filter(created_at__lt=from_date, total_value__gt=0).order_by('-created_at')
-
-#         trial_balance = []
-#         total = {'debit_total':0, 'credit_total':0}
-
-#         filtered_transactions = CumulativeLedger.objects.filter(created_at__range=[from_date, to_date])
-#         filtered_sum = filtered_transactions.values('ledger_name', 'account_chart__account_type', 'account_chart__group' ).annotate(Sum('debit_amount'), Sum('credit_amount'), Sum('value_changed'))
-
-#         for fil in filtered_sum:
-#             data = {}
-#             data['ledger'] = fil['ledger_name']
-#             account_type = fil['account_chart__account_type']
-#             account_group = fil['account_chart__account_group']
-#             data['debit'] = fil['debit_amount__sum']
-#             data['credit'] = fil['credit_amount__sum']
-#             if account_type in ['Asset', 'Expense']:
-#                 if fil['value_changed__sum'] < 0:
-#                     total['credit_total'] += abs(fil['value_changed__sum'])
-#                 else:
-#                     total['debit_total'] += abs(fil['value_changed__sum'])
-#             else:
-#                 if fil['value_changed__sum'] < 0:
-#                     total['debit_total'] += abs(fil['value_changed__sum'])
-#                 else:
-#                     total['credit_total'] += abs(fil['value_changed__sum'])
-
-
-
-#             if not any(d['account_type'] == account_type for d in trial_balance):
-#                     trial_balance.append(
-#                         {
-#                             'account_type': account_type,
-#                             'ledgers' : [data],
-#                             'group' : account_group
-#                         }
-#                     )
-#             else:
-#                 for tb in trial_balance:
-#                     if tb['account_type'] == account_type:
-#                         tb['ledgers'].append(data)
-#                         break
-
-
-#         included_ledgers = []
-
-#         for trans in before_transactions:
-#             account_type = trans.account_chart.account_type
-#             if trans.ledger_name not in included_ledgers:
-#                 included_ledgers.append(trans.ledger_name)
-#                 if not any(d['account_type'] == account_type for d in trial_balance):
-#                     data = {
-#                         'ledger': trans.ledger_name,
-#                         'opening': trans.total_value,
-#                         'debit':'-',
-#                         'credit':'-',
-#                         'closing': trans.total_value,
-#                         'group': account_group
-#                     }
-#                     trial_balance.append({'account_type':account_type, 'ledgers':[data], 'group': account_group})
-#                 else:
-#                     for tb in trial_balance:
-#                         if tb['account_type'] == account_type:
-#                             if not any(d['ledger'] == trans.ledger_name for d in tb['ledgers']):
-#                                 tb['ledgers'].append({
-#                                     'ledger': trans.ledger_name,
-#                                     'opening': trans.total_value,
-#                                     'debit':'-',
-#                                     'credit':'-',
-#                                     'closing': trans.total_value,
-#                                     'group': account_group
-#                                 })
-#                             else:
-#                                 for led in tb['ledgers']:
-#                                     if led['ledger'] == trans.ledger_name:
-#                                         led['opening'] = trans.total_value
-#                                         if account_type in ['Asset', 'Expense']:
-#                                             led['closing'] = trans.total_value + led['debit'] - led['credit']
-#                                         else:
-#                                             led['closing'] = trans.total_value + led['credit'] - led['debit']
-#                                         break
-
-
-#             if len(included_ledgers) >= len(all_ledgers_list):
-#                 break
-#         # print(trial_balance)
-
- 
-#         return trial_balance, total
-
-#     def get(self, request):
-#         from_date = request.GET.get('fromDate', None)
-#         to_date = request.GET.get('toDate', None)
-#         option = request.GET.get('option', None)
-#         current_fiscal_year = Organization.objects.last().current_fiscal_year
-#         first_date=None
-#         last_date=None
-
-#         if from_date and to_date:
-#             if option and option =='openclose':
-#                 trial_balance, total = self.detail_view(from_date, to_date)
-#                 context = {
-#                     'trial_balance': trial_balance,
-#                     "total": total,
-#                     "from_date":from_date,
-#                     "to_date":to_date,
-#                     'openclose':True,
-#                     'current_fiscal_year':current_fiscal_year
-#                 }
-#                 return render(request, 'accounting/trial_balance.html', context)
-#             else:
-#                 trial_balance, total= self.filtered_view(from_date, to_date)
-#                 context = {
-#                     'trial_balance': trial_balance,
-#                     "total": total,
-#                     "from_date":from_date,
-#                     "to_date":to_date,
-#                     'current_fiscal_year':current_fiscal_year
-#                 }
-
-#                 return render(request, 'accounting/trial_balance.html', context)
-        
-#         else:
-#             trial_balance = []
-#             total = {'debit_total':0, 'credit_total':0}
-#             ledgers = AccountLedger.objects.filter(~Q(total_value=0))
-#             for led in ledgers:
-#                 data = {}
-#                 account_type = led.account_chart.account_type
-#                 # account_group = led.account_chart.group
-#                 # print(account_group)
-                
-#                 data['ledger']=led.ledger_name
-#                 data['group']=led.account_chart.group
-#                 if account_type in ['Asset', 'Expense']:
-#                     if led.total_value > 0:
-#                         data['debit'] = led.total_value
-#                         total['debit_total'] += led.total_value
-#                         data['credit'] = '-'
-#                     else:
-#                         val = abs(led.total_value)
-#                         data['credit'] = val
-#                         total['credit_total'] += val
-#                         data['debit'] = '-'
-#                 else:
-#                     if led.total_value > 0:
-#                         data['credit'] = led.total_value
-#                         total['credit_total'] += led.total_value
-#                         data['debit'] = '-'
-#                     else:
-#                         val = abs(led.total_value)
-#                         data['debit'] = val
-#                         total['debit_total'] += val
-#                         data['credit'] = '-'
-#                 if not any(d['account_type'] == account_type for d in trial_balance):
-#                     trial_balance.append(
-#                         {
-#                             'account_type': account_type,
-#                             'ledgers' : [data]
-#                             # 'group': account_group
-#                         }
-#                     )
-#                 else:
-#                     for tb in trial_balance:
-#                         if tb['account_type'] == account_type:
-#                             tb['ledgers'].append(data)
-#                             break
-                
-#                 debit_entries = TblDrJournalEntry.objects.filter(ledger=led)
-#                 credit_entries = TblCrJournalEntry.objects.filter(ledger=led)
-
-#                 # Check the count of credit entries
-#                 credit_entry_count = credit_entries.count()
-
-#                 # Check the count of debit entries
-#                 debit_entry_count = debit_entries.count()
-
-#                 if credit_entry_count > 0 or debit_entry_count > 0:
-#                     # Calculate the first and last dates for credit entries
-#                     credit_date_range = credit_entries.aggregate(
-#                         first_credit_date=Min('created_at'),
-#                         last_credit_date=Max('created_at')
-#                     )
-
-#                     # Calculate the first and last dates for debit entries
-#                     debit_date_range = debit_entries.aggregate(
-#                         first_debit_date=Min('created_at'),
-#                         last_debit_date=Max('created_at')
-#                     )
-
-#                     # Determine the minimum date for this ledger (comparing debit and credit)
-#                     ledger_first_date = None
-
-#                     if credit_date_range['first_credit_date'] and debit_date_range['first_debit_date']:
-#                         ledger_first_date = min(
-#                             credit_date_range['first_credit_date'],
-#                             debit_date_range['first_debit_date']
-#                         )
-#                     elif credit_date_range['first_credit_date']:
-#                         ledger_first_date = credit_date_range['first_credit_date']
-#                     elif debit_date_range['first_debit_date']:
-#                         ledger_first_date = debit_date_range['first_debit_date']
-
-#                     # Update the overall minimum date
-#                     if ledger_first_date and (first_date is None or ledger_first_date < first_date):
-#                         first_date = ledger_first_date
-
-#                     # Determine the maximum date for this ledger (comparing debit and credit)
-#                     ledger_last_date = None
-
-#                     if credit_date_range['last_credit_date'] and debit_date_range['last_debit_date']:
-#                         ledger_last_date = max(
-#                             credit_date_range['last_credit_date'],
-#                             debit_date_range['last_debit_date']
-#                         )
-#                     elif credit_date_range['last_credit_date']:
-#                         ledger_last_date = credit_date_range['last_credit_date']
-#                     elif debit_date_range['last_debit_date']:
-#                         ledger_last_date = debit_date_range['last_debit_date']
-
-#                     # Update the overall maximum date
-#                     if ledger_last_date and (last_date is None or ledger_last_date > last_date):
-#                         last_date = ledger_last_date
-
-             
-
-#         vat_receivable, vat_payable = 0, 0
-#         new_vat_ledger = None  # Define a variable to store the new VAT ledger entry
-
-        
-
-
-#         # Find the new VAT ledger entry
-#         for sata in trial_balance:
-
-#             new_ledgers = []
-#             for data in sata['ledgers']:
-#                 if data['ledger'] == 'VAT Receivable':
-#                     if data['debit'] == '-':
-#                         data['debit'] = 0
-#                     vat_receivable = data['debit']
- 
-#                     total['debit_total'] -= data['debit']
-#                 elif data['ledger'] == 'VAT Payable':
-#                     if data['credit'] == '-':
-#                         data['credit'] = 0
-#                     vat_payable = data['credit']
-#                     total['credit_total'] -= data['credit']
-#                 else:
-#                     new_ledgers.append(data)  # Keep all other ledgers
-
-#             sata['ledgers'] = new_ledgers  # Replace ledgers with the filtered list
-
-#         # Calculate the VAT amount
-#         vat_amount = vat_receivable - vat_payable
-
-#         if vat_amount != 0:
-#             new_vat_ledger = {'ledger': 'VAT'}
-#             if vat_amount > 0:
-#                 new_vat_ledger['account_head'] = 'Asset'
-#                 new_vat_ledger['debit'] = vat_amount
-#                 new_vat_ledger['credit'] = '-'
-#                 total['debit_total'] += vat_amount
-#             else:
-#                 new_vat_ledger['account_head'] = 'Liability'
-#                 new_vat_ledger['debit'] = '-'
-#                 new_vat_ledger['credit'] = abs(vat_amount)
-#                 total['credit_total'] += abs(vat_amount)
-
-#         # Merge the new VAT entry with the existing Asset or Liability entry
-#         if new_vat_ledger:
-#             for sata in trial_balance:
-#                 if sata['account_type'] in ['Asset', 'Liability']:
-#                     sata['ledgers'].append(new_vat_ledger)
-#                     break
-
-
-
-#         Sundry_debtors_total = 0
-#         Sundry_creditors_total = 0
-#         new_ledgers_asset = []
-#         new_ledgers_liability = []
-
-#         for entry in trial_balance:
-#             new_ledger_entries = []
-#             for data in entry['ledgers']:
-#                 group = data.get('group')
-#                 if group == 'Sundry Debtors':
-#                     Sundry_debtors_total += data.get('debit')
-#                 elif group == 'Sundry Creditors':
-#                     Sundry_creditors_total += data.get('credit')
-#                 else:
-#                     new_ledger_entries.append(data)  # Keep all other ledgers
-            
-#             entry['ledgers'] = new_ledger_entries  # Replace ledgers with the filtered list
-
-#         # Create new ledger entries for Sundry Debtors and add to the Asset section
-#         if Sundry_debtors_total != 0:
-#             new_sundry_debtors_entry = {'ledger': 'Sundry Debtors', 'group': 'Asset', 'debit': Sundry_debtors_total, 'credit': '-'}
-#             new_ledgers_asset.append(new_sundry_debtors_entry)
-
-#         # Create new ledger entries for Sundry Creditors and add to the Liability section
-#         if Sundry_creditors_total != 0:
-#             new_sundry_creditors_entry = {'ledger': 'Sundry Creditors', 'group': 'Liability', 'debit': '-', 'credit': Sundry_creditors_total}
-#             new_ledgers_liability.append(new_sundry_creditors_entry)
-
-#         # Add the new ledger entries to the respective sections
-#         for entry in trial_balance:
-#             if entry['account_type'] == 'Asset':
-#                 entry['ledgers'] += new_ledgers_asset
-#             elif entry['account_type'] == 'Liability':
-#                 entry['ledgers'] += new_ledgers_liability
-
-
-
-
-#         context = {
-#             'trial_balance': trial_balance,
-#             "total": total,
-#             "from_date":from_date,
-#             "to_date":to_date,
-#             'current_fiscal_year':current_fiscal_year,
-#             'first_date': first_date,
-#             'last_date': last_date
-#         }
-
-#         return render(request, 'accounting/trial_balance.html', context)
-
-
+from .detail_utils import give_detail
 class TrialBalanceView(IsAdminMixin, View):
-    # def get_context_data(self, **kwargs):
-    #     context = super().get_context_data(**kwargs)
-        # context['auto_order_active'] = FlagMenu.objects.first().autoaccept_order
-        # return context
 
     def filtered_view(self, from_date, to_date):
         filtered_transactions = CumulativeLedger.objects.filter(created_at__range=[from_date, to_date])
@@ -966,14 +666,16 @@ class TrialBalanceView(IsAdminMixin, View):
 
         if from_date and to_date:
             if option and option =='openclose':
-                trial_balance, total = self.detail_view(from_date, to_date)
+                # trial_balance, total = self.detail_view(from_date, to_date)
+                trial_balance, total = give_detail(from_date, to_date)
                 context = {
                     'trial_balance': trial_balance,
                     "total": total,
                     "from_date":from_date,
                     "to_date":to_date,
                     'openclose':True,
-                    'current_fiscal_year':current_fiscal_year
+                    'current_fiscal_year':current_fiscal_year,
+                    'trial_active' : Organization.objects.first().show_zero_ledgers
                 }
                 return render(request, 'accounting/trial_balance.html', context)
             else:
@@ -1222,62 +924,6 @@ class ProfitAndLoss(IsAdminMixin, TemplateView):
         context['revenue_total'] = revenue_total
 
         return context
-    
-
-# class BalanceSheet(IsAdminMixin, TemplateView):
-#     template_name = "accounting/balance_sheet.html"
-
-#     def get_context_data(self, **kwargs):
-#         context = super().get_context_data(**kwargs)
-
-#         asset_dict = {}
-#         liability_dict = {}
-
-#         assets = AccountChart.objects.filter(account_type='Asset')
-#         for ledger in assets:
-#             sub = AccountLedger.objects.filter(~Q(total_value=0), account_chart__group=ledger)
-#             if sub:
-#                 asset_dict[ledger.group] = sub
-
-
-#         liabilities = AccountChart.objects.filter(Q(account_type="Liability") | Q(account_type="Equity") )
-#         for ledger in liabilities:
-#             sub = AccountLedger.objects.filter(~Q(total_value=0), account_chart__group=ledger)
-#             if sub:
-#                 liability_dict[ledger.group] = sub
-
-#         asset_total = AccountLedger.objects.filter(account_chart__account_type='Asset').aggregate(Sum('total_value')).get('total_value__sum')
-#         liability_total = AccountLedger.objects.filter(Q(account_chart__account_type="Liability") | Q(account_chart__account_type="Equity") )\
-#                                     .aggregate(Sum('total_value')).get('total_value__sum')
-        
-
-#         """"""
-#         expenses = AccountLedger.objects.filter(~Q(total_value=0), account_chart__account_type="Expense")
-#         revenues = AccountLedger.objects.filter(~Q(total_value=0), account_chart__account_type="Revenue")
-#         _, expense_total, _, revenue_total = ProfitAndLossData.get_data(revenues=revenues, expenses=expenses)
-#         # print(revenue_total)
-#         # print(expense_total)
-#         """"""
-#         # print(f"Revenue_total {revenue_total}")
-#         # print(f"Expense_total {expense_total}")
-#         if revenue_total > expense_total:
-#             difference_sum = abs(revenue_total-expense_total)
-#             context['lib_retained_earnings'] =  difference_sum
-#             # context['lib_retained_earnings'] =  revenue_total
-#             liability_total +=  difference_sum  #difference of expense and the sales
-#             # print(liability_total)
-#         else:
-#             difference_sum = abs(revenue_total-expense_total)
-#             context['asset_retained_earnings'] =  difference_sum
-#             asset_total +=  difference_sum
-#             # print(liability_total)
-        
-#         context['asset_total'] = asset_total
-#         context['liability_total'] = liability_total
-#         context['assets'] = asset_dict
-#         context['liabilities'] =  liability_dict
-
-#         return context
 
 class BalanceSheet(IsAdminMixin, TemplateView):
     template_name = "accounting/balance_sheet.html"
@@ -1430,12 +1076,13 @@ class PartyLedgerJournalView(CreateView):
         if debit_ledger_type in ['Asset', 'Expense']:
             debit_ledger.total_value =debit_ledger.total_value + debit_amount
             debit_ledger.save()
+            update_cumulative_ledger_bill(debit_ledger)
                 
 
         elif debit_ledger_type in ['Liability', 'Revenue', 'Equity']:
             debit_ledger.total_value = debit_ledger.total_value - debit_amount
             debit_ledger.save()
-                
+            update_cumulative_ledger_bill(debit_ledger)
         
         credit_ledger_id = debit_ledger1
         # print(credit_ledger_id)
@@ -1450,10 +1097,12 @@ class PartyLedgerJournalView(CreateView):
         if credit_ledger_type in ['Asset', 'Expense']:
             credit_ledger.total_value = credit_ledger.total_value - credit_amount
             credit_ledger.save()
+            update_cumulative_ledger_bill(credit_ledger)
          
         elif credit_ledger_type in ['Liability', 'Revenue', 'Equity']:
             credit_ledger.total_value = credit_ledger.total_value + credit_amount
             credit_ledger.save()
+            update_cumulative_ledger_bill(credit_ledger)
         current_page_url = reverse('ledger_detail', args=[ledger_id]) + f'?debit_ledger1={debit_ledger1}'
         
     
@@ -1508,12 +1157,12 @@ class PartyLedgerJournal1View(CreateView):
         if debit_ledger_type in ['Asset', 'Expense']:
             debit_ledger.total_value =debit_ledger.total_value + debit_amount
             debit_ledger.save()
-                
+            update_cumulative_ledger_bill(debit_ledger) 
 
         elif debit_ledger_type in ['Liability', 'Revenue', 'Equity']:
             debit_ledger.total_value = debit_ledger.total_value - debit_amount
             debit_ledger.save()
-                
+            update_cumulative_ledger_bill(debit_ledger)    
         
         credit_ledger_id = ledger_id
         # print(credit_ledger_id)
@@ -1528,348 +1177,13 @@ class PartyLedgerJournal1View(CreateView):
         if credit_ledger_type in ['Asset', 'Expense']:
             credit_ledger.total_value = credit_ledger.total_value - credit_amount
             credit_ledger.save()
-         
+            update_cumulative_ledger_bill(credit_ledger)
         elif credit_ledger_type in ['Liability', 'Revenue', 'Equity']:
             credit_ledger.total_value = credit_ledger.total_value + credit_amount
             credit_ledger.save()
+            update_cumulative_ledger_bill(credit_ledger)
         current_page_url = reverse('ledger_detail', args=[ledger_id]) + f'?debit_ledger1={debit_ledger1}'
         return redirect(current_page_url)
-
-# class LedgerDetailView(View):
-#     template_name = 'accounting/ledger_detail.html'  # Replace with your actual template path
-
-#     def get(self, request, ledger_id):
-#         ledger = get_object_or_404(AccountLedger, id=ledger_id)
-#         credit_entries = TblCrJournalEntry.objects.filter(ledger=ledger)
-#         total_credit = 0
-#         total_debit = 0
-#         debit_entries = TblDrJournalEntry.objects.filter(ledger=ledger)
-
-#         from_date = request.GET.get('fromDate')
-#         to_date = request.GET.get('toDate')
-#         option = request.GET.get('option')
-
-#         if from_date and to_date:
-
-
-#             credit_entries = credit_entries.filter(created_at__range=[from_date, to_date])
-#             debit_entries = debit_entries.filter(created_at__range=[from_date, to_date])
-
-#         for credit in credit_entries:
-#             total_credit += credit.credit_amount
-
-#         all_entries = sorted(
-#             chain(credit_entries, debit_entries),
-#             key=attrgetter('created_at')
-#         )
-#         print(all_entries)
-#         for debit in debit_entries:
-#             total_debit += debit.debit_amount
-#         print(total_debit)
-#         print(total_credit)
-#         total_diff = total_debit - total_credit
-#         opening_balance = 0
-#         closing_balance = 0
-#         if option == 'openclose':
-#             total_diff1 = total_debit - total_credit
-#             if total_diff < 0:
-#                 opening_balance = abs(total_diff1)
-#             else:
-#                 closing_balance = total_diff1
-#         # if total_diff < 0:
-#         #     opening_balance = total_diff
-#         # else:
-#         neg = 0
-#         if total_diff < 0:
-#             neg = 1
-#         elif total_diff == 0:
-#             neg = 2
-#         closing_balance = abs(total_diff)
-        
-        
-#         # final_opening_balance = opening_balance
-        
-#         context = {
-#             'ledger': ledger,
-#             'entries': all_entries, 
-#             'credit_entries': credit_entries,
-#             'debit_entries': debit_entries,
-#             'total_debit': total_debit,
-#             'total_credit': total_credit,
-#             'closing_balance': closing_balance,
-#             'opening_balance': opening_balance,
-#             'from_date': from_date,
-#             'to_date': to_date,
-#             'openclose': option == 'openclose',
-#             'neg': neg,
-            
-#             # 'final_opening_balance' : final_opening_balance
-#                    }
-#         return render(request, self.template_name, context)
-
-#latest_one
-# class LedgerDetailView(View):
-#     template_name = 'accounting/ledger_detail.html'  # Replace with your actual template path
-
-#     def get(self, request, ledger_id):
-#         ledger = get_object_or_404(AccountLedger, id=ledger_id)
-#         credit_entries = TblCrJournalEntry.objects.filter(ledger=ledger)
-#         total_credit = 0
-#         total_debit = 0
-#         debit_entries = TblDrJournalEntry.objects.filter(ledger=ledger)
-
-#         from_date = request.GET.get('fromDate')
-#         to_date = request.GET.get('toDate')
-#         option = request.GET.get('option')
-
-#         if from_date and to_date:
-#             credit_entries = credit_entries.filter(created_at__range=[from_date, to_date])
-#             debit_entries = debit_entries.filter(created_at__range=[from_date, to_date])
-
-#         for credit in credit_entries:
-#             total_credit += credit.credit_amount
-
-#         all_entries = sorted(
-#             chain(credit_entries, debit_entries),
-#             key=attrgetter('created_at')
-#         )
-
-#         for debit in debit_entries:
-#             total_debit += debit.debit_amount
-
-#         total_diff = total_debit - total_credit
-#         opening_balance = 0
-#         closing_balance = 0
-#         if option == 'openclose':
-#             total_diff1 = total_debit - total_credit
-#             if total_diff1 < 0:
-#                 opening_balance = abs(total_diff1)
-#             else:
-#                 closing_balance = total_diff1
-
-#         neg = 0
-#         if total_diff < 0:
-#             neg = 1
-#         elif total_diff == 0:
-#             neg = 2
-#         closing_balance = abs(total_diff)
-
-#         # Calculate the opening balance before filtering
-#         if from_date:
-#             opening_balance = 0
-#             opening_entries = TblCrJournalEntry.objects.filter(ledger=ledger, created_at__lt=from_date)
-#             for entry in opening_entries:
-#                 opening_balance += entry.credit_amount
-
-#         context = {
-#             'ledger': ledger,
-#             'entries': all_entries,
-#             'credit_entries': credit_entries,
-#             'debit_entries': debit_entries,
-#             'total_debit': total_debit,
-#             'total_credit': total_credit,
-#             'closing_balance': closing_balance,
-#             'opening_balance': opening_balance,
-#             'from_date': from_date,
-#             'to_date': to_date,
-#             'openclose': option == 'openclose',
-#             'neg': neg,
-#         }
-#         return render(request, self.template_name, context)
-
-# from django.db.models import Sum, F, DecimalField, Q, Value
-# from django.db.models import Min, Max
-# from django.utils import timezone  as django_timezone
-# from pytz import timezone as pytz_timezone
-# class LedgerDetailView(View):
-#     template_name = 'accounting/ledger_detail.html'  # Replace with your actual template path
-
-#     def get(self, request, ledger_id):
-#         kathmandu_timezone = pytz_timezone('Asia/Kathmandu')
-#         ledger = get_object_or_404(AccountLedger, id=ledger_id)
-      
-#         credit_entries = TblCrJournalEntry.objects.filter(ledger=ledger)
-#         total_credit = 0
-#         total_debit = 0
-#         debit_entries = TblDrJournalEntry.objects.filter(ledger=ledger)
-#         from_date = request.GET.get('fromDate')
-#         to_date = request.GET.get('toDate')
-#         option = request.GET.get('option')
-#         current_fiscal_year = Organization.objects.last().current_fiscal_year
-#         if from_date and to_date:
-#             credit_entries = credit_entries.filter(created_at__range=[from_date, to_date])
-#             debit_entries = debit_entries.filter(created_at__range=[from_date, to_date])
-#         unique_journal_ids = debit_entries.values_list('journal_entry_id', flat=True).distinct()
-#         unique_journal_ids1 = credit_entries.values_list('journal_entry_id', flat=True).distinct()
-      
-       
-#         details = []
-#         for journal_id1 in unique_journal_ids1:
-           
-#             debit_entries_testing = TblDrJournalEntry.objects.filter(journal_entry_id=journal_id1)
-            
-                
-#             ledger_names = [debit_entry.ledger.ledger_name for debit_entry in debit_entries_testing]
-#             ledger_amount = [debit_entry.debit_amount for debit_entry in debit_entries_testing]
-         
-
-#             debit_entries_test3 = TblCrJournalEntry.objects.filter(Q(journal_entry_id=journal_id1) & Q(ledger_id=ledger_id))
-#             date = [debit_entry.created_at.astimezone(kathmandu_timezone).strftime("%Y-%m-%d %H:%M:%S") for debit_entry in debit_entries_test3]
-#             credit  = [debit_entry.credit_amount for debit_entry in debit_entries_test3]
-#             # print(credit)
-#             particulars  = [debit_entry.particulars for debit_entry in debit_entries_test3]
-           
-#             payers_info = ', '.join([f'{name} ({amount})' for name, amount in zip(ledger_names, ledger_amount)])
-           
-           
-#             for credit_entry in credit_entries:
-                
-             
-#                 # Create a dictionary for this ledger
-#                 debit_ledger_entry = {
-#                         'journal_id': journal_id1,
-#                         # 'payers': ', '.join(ledger_names),  # Join ledger names with a comma
-#                         'payers': payers_info,
-#                         'date': date,
-#                         'particulars': particulars,
-#                         'debit': Decimal('0'),
-#                         'credit': credit
-
-#                     }
-
-#             details.append(debit_ledger_entry)
-
-#         for journal_id1 in unique_journal_ids:
-#             debit_entries_test1 = TblCrJournalEntry.objects.filter(journal_entry_id=journal_id1)
-#             ledger_names = [debit_entry.ledger.ledger_name for debit_entry in debit_entries_test1]
-#             ledger_amount = [debit_entry.credit_amount for debit_entry in debit_entries_test1]
-#             payers_info = ', '.join([f'{name} ({amount})' for name, amount in zip(ledger_names, ledger_amount)])
-
-#             debit_entries_test2 = TblDrJournalEntry.objects.filter(Q(journal_entry_id=journal_id1) & Q(ledger_id=ledger_id))
-#             date = [debit_entry.created_at.astimezone(kathmandu_timezone).strftime("%Y-%m-%d %H:%M:%S")  for debit_entry in debit_entries_test2]
-#             debit  = [debit_entry.debit_amount for debit_entry in debit_entries_test2]
-#             particulars  = [debit_entry.particulars for debit_entry in debit_entries_test2]
-
-#             for debit_entry in debit_entries:
-             
-#                 # Create a dictionary for this ledger
-#                 debit_ledger_entry = {
-#                         'journal_id': journal_id1,
-#                         # 'payers': ', '.join(ledger_names),  # Join ledger names with a comma
-#                         'payers': payers_info,
-#                         'date': date,
-#                         'particulars': particulars,
-#                         'debit': debit,
-#                         'credit': Decimal('0')
-
-#                     }
-
-#             details.append(debit_ledger_entry)
-        
-  
-
-#         sorted_details = sorted(details, key=lambda x: x['date'])
-
-
-
-
-#         # Check the count of credit entries
-#         credit_entry_count = credit_entries.count()
-
-#         # Check the count of debit entries
-#         debit_entry_count = debit_entries.count()
-
-#         # Initialize variables as None
-#         first_date = None
-#         last_date = None
-
-
-#         if credit_entry_count > 0 or debit_entry_count > 0:
-#             credit_date_range = credit_entries.aggregate(
-#                 first_credit_date=Min('created_at'),
-#                 last_credit_date=Max('created_at')
-#             )
-
-#             # Calculate the first and last dates for debit entries
-#             debit_date_range = debit_entries.aggregate(
-#                 first_debit_date=Min('created_at'),
-#                 last_debit_date=Max('created_at')
-#             )
-
-#             first_credit_date = credit_date_range['first_credit_date'] or django_timezone.datetime.max.replace(tzinfo=django_timezone.utc)
-#             last_credit_date = credit_date_range['last_credit_date'] or django_timezone.datetime.min.replace(tzinfo=django_timezone.utc)
-#             first_debit_date = debit_date_range['first_debit_date'] or django_timezone.datetime.max.replace(tzinfo=django_timezone.utc)
-#             last_debit_date = debit_date_range['last_debit_date'] or django_timezone.datetime.min.replace(tzinfo=django_timezone.utc)
-
-#             # Determine the overall date range
-#             first_date = min(first_credit_date, first_debit_date) 
-#             last_date = max(last_credit_date, last_debit_date) 
-
-#         if from_date and to_date:
-#             credit_entries = credit_entries.filter(created_at__range=[from_date, to_date])
-#             debit_entries = debit_entries.filter(created_at__range=[from_date, to_date])
-
-#         for credit in credit_entries:
-#             total_credit += credit.credit_amount
-
-#         all_entries = sorted(
-#             chain(credit_entries, debit_entries),
-#             key=attrgetter('created_at')
-#         )
-
-#         for debit in debit_entries:
-#             total_debit += debit.debit_amount
-
-#         total_diff = total_debit - total_credit
-#         opening_balance_credit = 0
-#         opening_balance_debit = 0
-#         closing_balance = 0
-#         if option == 'openclose':
-#             total_diff1 = total_debit - total_credit
-#             if total_diff1 < 0:
-#                 opening_balance_credit = abs(total_diff1)
-#             else:
-#                 closing_balance = total_diff1
-
-#         neg = 0
-#         if total_diff < 0:
-#             neg = 1
-#         elif total_diff == 0:
-#             neg = 2
-#         closing_balance = abs(total_diff)
-
-#         # Calculate the opening balance before filtering
-#         if from_date:
-#             opening_balance_credit = 0
-#             opening_balance_debit = 0
-#             opening_entries_credit = TblCrJournalEntry.objects.filter(ledger=ledger, created_at__lt=from_date)
-#             opening_entries_debit = TblDrJournalEntry.objects.filter(ledger=ledger, created_at__lt=from_date)
-            
-#             for entry in opening_entries_credit:
-#                 opening_balance_credit += entry.credit_amount
-#             for entry in opening_entries_debit:
-#                 opening_balance_debit += entry.debit_amount
-
-#         context = {
-#             'ledger': ledger,
-#             'entries': all_entries,
-#             'credit_entries': credit_entries,
-#             'debit_entries': debit_entries,
-#             'total_debit': total_debit,
-#             'total_credit': total_credit,
-#             'closing_balance': closing_balance,
-#             'opening_balance': {'credit': opening_balance_credit, 'debit': opening_balance_debit},
-#             'from_date': from_date,
-#             'to_date': to_date,
-#             'openclose': option == 'openclose',
-#             'neg': neg,
-#             'current_fiscal_year':current_fiscal_year,
-#             'first_credit_date': first_date,
-#             'last_credit_date': last_date,
-#             'sorted_details':sorted_details
-    
-#         }
-#         return render(request, self.template_name, context)
     
 from datetime import datetime, timedelta
 from django.db.models import Sum, F, DecimalField, Q, Value
@@ -2087,39 +1401,6 @@ class LedgerDetailView(View):
             to_date -= timedelta(days=1)
 
             to_date = to_date.strftime('%Y-%m-%d')
-
-    #     if from_date:
-    # # Initialize opening balances
-    #         to_date_str = request.GET.get('toDate')
-            
-    #         to_date = datetime.strptime(to_date_str, '%Y-%m-%d')
-    #         to_date += timedelta(days=1)
-    #         opening_balance_credit = 0
-    #         opening_balance_debit = 0
-
-    #         # Filter credit entries before the entered date
-    #         opening_entries_credit = TblCrJournalEntry.objects.filter(ledger=ledger)
-    #         opening_entries_debit = TblDrJournalEntry.objects.filter(ledger=ledger)
-
-    #         # Calculate the sum of credit and debit amounts before the entered date
-    #         opening_balance_credit += opening_entries_credit.aggregate(total_credit=Sum('credit_amount'))['total_credit'] or 0
-    #         opening_balance_debit += opening_entries_debit.aggregate(total_debit=Sum('debit_amount'))['total_debit'] or 0
-    #         print(opening_balance_credit)
-    #         print(opening_balance_debit)
-
-    #         # Calculate the sum of credit and debit amounts within the entered date range
-    #         credit_entries_within_range = TblCrJournalEntry.objects.filter(ledger=ledger, created_at__range=[from_date, to_date])
-    #         debit_entries_within_range = TblDrJournalEntry.objects.filter(ledger=ledger, created_at__range=[from_date, to_date])
-
-    #         total_credit_within_range = credit_entries_within_range.aggregate(total_credit=Sum('credit_amount'))['total_credit'] or 0
-    #         total_debit_within_range = debit_entries_within_range.aggregate(total_debit=Sum('debit_amount'))['total_debit'] or 0
-
-    #         # Subtract the sum within the date range from the sum before the date
-    #         opening_balance_credit -= total_credit_within_range
-    #         opening_balance_debit -= total_debit_within_range
-    #         to_date -= timedelta(days=1)
-
-    #         to_date = to_date.strftime('%Y-%m-%d')
 
         context = {
             'ledger': ledger,
@@ -2347,154 +1628,6 @@ class SundryDebtorsLedgersView(View):
             'first_date': first_date,
             'last_date': last_date
         })
-    
-# class SundryDebtorsLedgersView(View):
-#     template_name = 'accounting/sundry_debtors.html'
-
-#     def get(self, request):
-#         # Query the AccountLedger model to get all ledgers with group "Sundry Debtors"
-#         sundry_debtors_ledgers = AccountLedger.objects.filter(account_chart__group="Sundry Debtors")
-
-#         # Get the filter parameters from the request
-#         from_date = request.GET.get('fromDate')
-#         to_date = request.GET.get('toDate')
-#         option = request.GET.get('option')
-#         current_fiscal_year = Organization.objects.last().current_fiscal_year
-#         current_date = datetime.today().date()
-#         tomorrow_date = current_date + timedelta(days=1)
-#         # Create a list to store ledger details
-#         ledger_details = []
-
-#         total_d = 0  # for storing the all total of the debit of the entries in ledger_details
-#         total_c = 0  # for storing the all total of the credit of the entries in ledger_details
-
-#         # Initialize variables for overall date range
-#         first_date = None
-#         last_date = None
-
-#         # Calculate debit and credit totals for each ledger for the selected date
-#         for ledger in sundry_debtors_ledgers:
-#             # Filter debit and credit entries by date range
-#             debit_entries = TblDrJournalEntry.objects.filter(ledger=ledger, created_at__range=[current_date, tomorrow_date])
-#             credit_entries = TblCrJournalEntry.objects.filter(ledger=ledger, created_at__range=[current_date, tomorrow_date])
-
-
-#             # Check the count of credit entries
-#             credit_entry_count = credit_entries.count()
-
-#             # Check the count of debit entries
-#             debit_entry_count = debit_entries.count()
-
-#             if credit_entry_count > 0 or debit_entry_count > 0:
-#                 # Calculate the first and last dates for credit entries
-#                 credit_date_range = credit_entries.aggregate(
-#                     first_credit_date=Min('created_at'),
-#                     last_credit_date=Max('created_at')
-#                 )
-
-#                 # Calculate the first and last dates for debit entries
-#                 debit_date_range = debit_entries.aggregate(
-#                     first_debit_date=Min('created_at'),
-#                     last_debit_date=Max('created_at')
-#                 )
-
-#                 # Determine the minimum date for this ledger (comparing debit and credit)
-#                 ledger_first_date = None
-
-#                 if credit_date_range['first_credit_date'] and debit_date_range['first_debit_date']:
-#                     ledger_first_date = min(
-#                         credit_date_range['first_credit_date'],
-#                         debit_date_range['first_debit_date']
-#                     )
-#                 elif credit_date_range['first_credit_date']:
-#                     ledger_first_date = credit_date_range['first_credit_date']
-#                 elif debit_date_range['first_debit_date']:
-#                     ledger_first_date = debit_date_range['first_debit_date']
-
-#                 # Update the overall minimum date
-#                 if ledger_first_date and (first_date is None or ledger_first_date < first_date):
-#                     first_date = ledger_first_date
-
-#                 # Determine the maximum date for this ledger (comparing debit and credit)
-#                 ledger_last_date = None
-
-#                 if credit_date_range['last_credit_date'] and debit_date_range['last_debit_date']:
-#                     ledger_last_date = max(
-#                         credit_date_range['last_credit_date'],
-#                         debit_date_range['last_debit_date']
-#                     )
-#                 elif credit_date_range['last_credit_date']:
-#                     ledger_last_date = credit_date_range['last_credit_date']
-#                 elif debit_date_range['last_debit_date']:
-#                     ledger_last_date = debit_date_range['last_debit_date']
-
-#                 # Update the overall maximum date
-#                 if ledger_last_date and (last_date is None or ledger_last_date > last_date):
-#                     last_date = ledger_last_date
-
-#             # Rest of your code for calculating totals and appending to ledger_details
-#             if from_date and to_date:
-#                 debit_entries = TblDrJournalEntry.objects.filter(ledger=ledger)
-#                 credit_entries = TblCrJournalEntry.objects.filter(ledger=ledger)
-#                 from_date = request.GET.get('fromDate')
-#                 to_date_str = request.GET.get('toDate')        
-#                 to_date = datetime.strptime(to_date_str, '%Y-%m-%d')
-#                 to_date += timedelta(days=1)
-#                 debit_entries = debit_entries.filter(created_at__range=[from_date, to_date])
-#                 credit_entries = credit_entries.filter(created_at__range=[from_date, to_date])
-#                 to_date -= timedelta(days=1)
-
-#                 to_date = to_date.strftime('%Y-%m-%d')
-
-#             total_credit=0
-#             total_debit=0
-#                 # Calculate debit total for the selected date
-#             for credit in credit_entries:
-#                 total_credit += credit.credit_amount
-
-#                 # Calculate credit total for the selected date
-#             for debit in debit_entries:
-#                 total_debit += debit.debit_amount
-
-#             if total_debit != 0 or total_credit != 0:
-#                 ledger_details.append({
-#                     'ledger_name': ledger.ledger_name,
-#                     'debit_total': total_debit,
-#                     'credit_total': total_credit,
-#                 })
-                    
-#                     #Update the overall totals
-#             total_d += total_debit
-#             total_c += total_credit
-
-#         balance = total_d - total_c
-#         if balance <= 0:
-#             c = 0  # tells that it is negative
-#         else:
-#             c = 1  # tells that it is positive
-
-#         new_balance = abs(balance)
-
-        # opeining_debit_entries = 
-        # all_time_balance_debit = opening_debit_entries.aggregate(total_debit=Sum('debit_amount'))['total_debit'] or 0
-        # all_time_balance_credit = opening_credit_entries.aggregate(total_debit=Sum('debit_amount'))['total_debit'] or 0
-
-
-        # Render a template with the retrieved ledger details and filter parameters
-        # return render(request, self.template_name, {
-        #     'ledger_details': ledger_details,
-        #     'from_date': from_date,
-        #     'to_date': to_date,
-        #     'option': option,
-        #     'total_d': total_d,
-        #     'total_c': total_c,
-        #     'openclose': option == 'openclose',
-        #     'balance': new_balance,
-        #     'c': c,
-        #     'current_fiscal_year': current_fiscal_year,
-        #     'first_date': first_date,
-        #     'last_date': last_date
-        # })
 
 class SundryCreditorsLedgersView(View):
     template_name = 'accounting/sundry_creditors.html'
@@ -2634,151 +1767,6 @@ class SundryCreditorsLedgersView(View):
             'last_date': last_date
         })
 
-    
-# class SundryCreditorsLedgersView(View):
-#     template_name = 'accounting/sundry_creditors.html'
-
-#     def get(self, request):
-#         # Query the AccountLedger model to get all ledgers with group "Sundry Debtors"
-#         sundry_creditors_ledgers = AccountLedger.objects.filter(account_chart__group="Sundry Creditors")
-
-#         # Get the filter parameters from the request
-#         from_date = request.GET.get('fromDate')
-#         to_date = request.GET.get('toDate')
-#         option = request.GET.get('option')
-#         current_fiscal_year = Organization.objects.last().current_fiscal_year
-
-#         # Create a list to store ledger details
-#         ledger_details = []
-
-#         total_d = 0  # for storing the all total of the debit of the entries in ledger_details
-#         total_c = 0  # for storing the all total of the credit of the entries in ledger_details
-
-#         # Initialize variables for overall date range
-#         first_date = None
-#         last_date = None
-#         current_date = datetime.today().date()
-#         tomorrow_date = current_date + timedelta(days=1)
-
-#         # Calculate debit and credit totals for each ledger for the selected date
-#         for ledger in sundry_creditors_ledgers:
-#             # Filter debit and credit entries by date range
-#             debit_entries = TblDrJournalEntry.objects.filter(ledger=ledger, created_at__range=[current_date, tomorrow_date])
-#             credit_entries = TblCrJournalEntry.objects.filter(ledger=ledger, created_at__range=[current_date, tomorrow_date])
-
-#             # Check the count of credit entries
-#             credit_entry_count = credit_entries.count()
-
-#             # Check the count of debit entries
-#             debit_entry_count = debit_entries.count()
-
-#             if credit_entry_count > 0 or debit_entry_count > 0:
-#                 # Calculate the first and last dates for credit entries
-#                 credit_date_range = credit_entries.aggregate(
-#                     first_credit_date=Min('created_at'),
-#                     last_credit_date=Max('created_at')
-#                 )
-
-#                 # Calculate the first and last dates for debit entries
-#                 debit_date_range = debit_entries.aggregate(
-#                     first_debit_date=Min('created_at'),
-#                     last_debit_date=Max('created_at')
-#                 )
-
-#                 # Determine the minimum date for this ledger (comparing debit and credit)
-#                 ledger_first_date = None
-
-#                 if credit_date_range['first_credit_date'] and debit_date_range['first_debit_date']:
-#                     ledger_first_date = min(
-#                         credit_date_range['first_credit_date'],
-#                         debit_date_range['first_debit_date']
-#                     )
-#                 elif credit_date_range['first_credit_date']:
-#                     ledger_first_date = credit_date_range['first_credit_date']
-#                 elif debit_date_range['first_debit_date']:
-#                     ledger_first_date = debit_date_range['first_debit_date']
-
-#                 # Update the overall minimum date
-#                 if ledger_first_date and (first_date is None or ledger_first_date < first_date):
-#                     first_date = ledger_first_date
-
-#                 # Determine the maximum date for this ledger (comparing debit and credit)
-#                 ledger_last_date = None
-
-#                 if credit_date_range['last_credit_date'] and debit_date_range['last_debit_date']:
-#                     ledger_last_date = max(
-#                         credit_date_range['last_credit_date'],
-#                         debit_date_range['last_debit_date']
-#                     )
-#                 elif credit_date_range['last_credit_date']:
-#                     ledger_last_date = credit_date_range['last_credit_date']
-#                 elif debit_date_range['last_debit_date']:
-#                     ledger_last_date = debit_date_range['last_debit_date']
-
-#                 # Update the overall maximum date
-#                 if ledger_last_date and (last_date is None or ledger_last_date > last_date):
-#                     last_date = ledger_last_date
-
-#             # Rest of your code for calculating totals and appending to ledger_details
-#             if from_date and to_date:
-#                 debit_entries = TblDrJournalEntry.objects.filter(ledger=ledger)
-#                 credit_entries = TblCrJournalEntry.objects.filter(ledger=ledger)
-#                 from_date = request.GET.get('fromDate')
-#                 to_date_str = request.GET.get('toDate')        
-#                 to_date = datetime.strptime(to_date_str, '%Y-%m-%d')
-#                 to_date += timedelta(days=1)
-#                 debit_entries = debit_entries.filter(created_at__range=[from_date, to_date])
-#                 credit_entries = credit_entries.filter(created_at__range=[from_date, to_date])
-#                 to_date -= timedelta(days=1)
-
-#                 to_date = to_date.strftime('%Y-%m-%d')
-
-
-#             total_credit=0
-#             total_debit=0
-#                 # Calculate debit total for the selected date
-#             for credit in credit_entries:
-#                 total_credit += credit.credit_amount
-
-#                 # Calculate credit total for the selected date
-#             for debit in debit_entries:
-#                 total_debit += debit.debit_amount
-
-#             if total_debit != 0 or total_credit != 0:
-#                 ledger_details.append({
-#                     'ledger_name': ledger.ledger_name,
-#                     'debit_total': total_debit,
-#                     'credit_total': total_credit,
-#                 })
-                    
-#                     #Update the overall totals
-#             total_d += total_debit
-#             total_c += total_credit
-
-#         balance = total_d - total_c
-#         if balance <= 0:
-#             c = 0  # tells that it is negative
-#         else:
-#             c = 1  # tells that it is positive
-
-#         new_balance = abs(balance)
-
-#         # Render a template with the retrieved ledger details and filter parameters
-#         return render(request, self.template_name, {
-#             'ledger_details': ledger_details,
-#             'from_date': from_date,
-#             'to_date': to_date,
-#             'option': option,
-#             'total_d': total_d,
-#             'total_c': total_c,
-#             'openclose': option == 'openclose',
-#             'balance': new_balance,
-#             'c': c,
-#             'current_fiscal_year': current_fiscal_year,
-#             'first_date': first_date,
-#             'last_date': last_date
-#         })
-
 
 def soft_delete_journal(request, journal_id):
     try:
@@ -2801,6 +1789,7 @@ def soft_delete_journal(request, journal_id):
                 ledger.total_value -= credit_entry.credit_amount
 
             ledger.save()
+            update_cumulative_ledger_bill(ledger)
 
         # Reverse the ledger operations for debit entries
         for debit_entry in debit_entries:
@@ -2814,7 +1803,7 @@ def soft_delete_journal(request, journal_id):
                 ledger.total_value += debit_entry.debit_amount
 
             ledger.save()
-
+            update_cumulative_ledger_bill(ledger)
  
         journal_entry.delete()
 
@@ -2832,6 +1821,7 @@ def soft_delete_journal(request, journal_id):
     return redirect('journal_list')
 
 
+from django.http import Http404
 class JournalEntryUpdateView(IsAdminMixin, View):
     # Define your GET method to display the form for updating a journal entry
     def get(self, request, pk):
@@ -2847,27 +1837,60 @@ class JournalEntryUpdateView(IsAdminMixin, View):
         debit_data = []
         credit_data = []
 
+
+
+
         # Populate debit_data
         for entry in debit_entries:
+            debit_subledgers = []
+            for subledger in AccountSubLedger.objects.filter(ledger=entry.ledger):
+                debit_subledgers.append({
+                    'id' : subledger.id,
+                    'subledger_name': subledger.sub_ledger_name
+                })
             debit_data.append({
+                'id': entry.ledger.id,
                 'ledger_name': entry.ledger.ledger_name,
                 'debit_amount': entry.debit_amount,
+                'particular': entry.particulars,
+                'subledger_id': entry.sub_ledger.id if entry.sub_ledger else "------",
+                'subledger_name': entry.sub_ledger.sub_ledger_name if entry.sub_ledger else "-----",
+                'subledgers': debit_subledgers
             })
 
         # Populate credit_data
         for entry in credit_entries:
+            credit_subledgers = []
+            for subledger in AccountSubLedger.objects.filter(ledger=entry.ledger):
+                credit_subledgers.append({
+                    'id' : subledger.id,
+                    'subledger_name': subledger.sub_ledger_name
+                })
             credit_data.append({
+                'id' : entry.ledger.id,
                 'ledger_name': entry.ledger.ledger_name,
                 'credit_amount': entry.credit_amount,
+                'particular' : entry.particulars,
+                'subledger_id': entry.sub_ledger.id if entry.sub_ledger else "--------",
+                'subledger_name': entry.sub_ledger.sub_ledger_name if entry.sub_ledger else "-------",
+                "subledgers": credit_subledgers
             })
 
+        # print(debit_entries)
+        # print(credit_entries)
+
         # Create an instance of the JournalEntryForm and populate it with values
-        form = JournalEntryForm(initial={
-            'debit_entries': debit_data,
-            'credit_entries': credit_data,
+        form = {
+            'debit_ledger': debit_data,
+            'credit_ledger': credit_data,
+            # 'debit_subledgers': debit_subledgers,
+            # 'credit_subledgers': credit_subledgers,
             'journal_total': journal_entry.journal_total,
             'fiscal_year': journal_entry.fiscal_year,
-        })
+            # 'journal_date': journal_entry.entry_date
+        }
+
+        # print(form)
 
         return render(request, 'accounting/journal/journal_entry_update.html', {
             'ledgers': ledgers,
@@ -2875,7 +1898,7 @@ class JournalEntryUpdateView(IsAdminMixin, View):
             'form': form,
             'journal_entry': journal_entry,
         })
-    
+               
     def get_subledger(self, subledger, ledger):
         subled = None
         if not subledger.startswith('-'):
@@ -2885,7 +1908,6 @@ class JournalEntryUpdateView(IsAdminMixin, View):
             except ValueError:
                 subled = AccountSubLedger.objects.create(sub_ledger_name=subledger, is_editable=True, ledger=ledger)
         return subled
-            
 
     def post(self, request, pk):
         data = request.POST
@@ -2898,6 +1920,8 @@ class JournalEntryUpdateView(IsAdminMixin, View):
         credit_particulars = data.getlist('credit_particular', [])
         credit_amounts = data.getlist('credit_amount', [])
         credit_subledgers = data.getlist('credit_subledger', [])
+        # entry_date = data.get('entry_date')
+        # narration = data.get('narration')
 
         ledgers = AccountLedger.objects.all()
         sub_ledgers = AccountSubLedger.objects.all()
@@ -2925,13 +1949,35 @@ class JournalEntryUpdateView(IsAdminMixin, View):
         except TblJournalEntry.DoesNotExist:
             raise Http404("Journal Entry does not exist")
 
-        # Update journal entry data
-        journal_entry.employee_name = request.user.username
-        journal_entry.journal_total = debit_sum
-        journal_entry.save()
+
+
+
+        #Update the value of ledger of old entries
+        existing_credit_entriess = TblCrJournalEntry.objects.filter(journal_entry=journal_entry)
+        print("credit_entries", existing_credit_entriess)
+        for existing_credit_entries in existing_credit_entriess:
+            old_credit_ledger = existing_credit_entries.ledger if existing_credit_entries else None
+            old_credit_subledger = existing_credit_entries.sub_ledger if existing_credit_entries else None
+            print("credit_name", old_credit_ledger.ledger_name)
+            old_credit_ledger_type = old_credit_ledger.account_chart.account_type
+            old_credit_amount = existing_credit_entries.credit_amount
+            if old_credit_ledger_type in ['Asset', 'Expense']:
+                print("to be increased", old_credit_amount)
+                old_credit_ledger.total_value += old_credit_amount
+                old_credit_ledger.save()
+                if old_credit_subledger:
+                    old_credit_subledger.total_value += old_credit_amount
+                    old_credit_subledger.save()
+            elif old_credit_ledger_type in ['Liability', 'Revenue', 'Equity']:
+                print("to be decreased", old_credit_amount)
+                old_credit_ledger.total_value -= old_credit_amount
+                old_credit_ledger.save()
+                if old_credit_subledger:
+                    old_credit_subledger.total_value -= old_credit_amount
+                    old_credit_subledger.save()
 
         # Update or create credit entries
-        existing_credit_entries = TblCrJournalEntry.objects.filter(journal_entry=journal_entry)
+
         credit_to_debit_mapping = {}
         for i in range(len(credit_ledgers)):
             credit_ledger_id = int(credit_ledgers[i])
@@ -2942,7 +1988,8 @@ class JournalEntryUpdateView(IsAdminMixin, View):
             credit_ledger_type = credit_ledger.account_chart.account_type
             
             # Check if there is an existing entry for this ledger, if so, update it, otherwise, create a new one
-            existing_entry = existing_credit_entries.filter(ledger=credit_ledger).first()
+            existing_entry = existing_credit_entriess.filter(ledger=credit_ledger).first()
+
             if existing_entry:  
                 existing_entry.particulars = credit_particular
                 existing_entry.credit_amount = credit_amount
@@ -2969,11 +2016,41 @@ class JournalEntryUpdateView(IsAdminMixin, View):
                 credit_ledger.total_value += credit_amount
                 credit_ledger.save()
                 if subledger:
+
                     subledger.total_value += credit_amount
                     subledger.save()
 
+
+
+        #Update the value of ledger of old entries
+        existing_debit_entriess = TblDrJournalEntry.objects.filter(journal_entry=journal_entry)
+        print("debit_entries", existing_debit_entriess)
+        for existing_debit_entries in existing_debit_entriess:
+            old_debit_ledger = existing_debit_entries.ledger if existing_debit_entries else None
+            old_debit_subledger = existing_debit_entries.sub_ledger if existing_debit_entries else None
+            print("debit_name", old_debit_ledger.ledger_name)
+            old_debit_ledger_type = old_debit_ledger.account_chart.account_type
+            old_debit_amount = existing_debit_entries.debit_amount
+            if old_debit_ledger_type in ['Asset', 'Expense']:
+                print("to be increased", old_debit_amount)
+                old_debit_ledger.total_value -= old_debit_amount
+                old_debit_ledger.save()
+                if old_debit_subledger:
+                    old_debit_subledger.total_value -= old_debit_amount
+                    old_debit_subledger.save()
+            elif old_debit_ledger_type in ['Liability', 'Revenue', 'Equity']:
+                print("to be decreased", old_debit_amount)
+                old_debit_ledger.total_value += old_debit_amount
+                old_debit_ledger.save()
+                if old_debit_subledger:
+                    old_debit_subledger.total_value += old_debit_amount
+                    old_debit_subledger.save()
+
+        # Delete any existing entries that are no longer present in the form
+        existing_credit_entriess.exclude(ledger__id__in=credit_ledgers).delete()
+
         # Update or create debit entries
-        existing_debit_entries = TblDrJournalEntry.objects.filter(journal_entry=journal_entry)
+        # existing_debit_entries = TblDrJournalEntry.objects.filter(journal_entry=journal_entry)
         for i in range(len(debit_ledgers)):
             debit_ledger_id = int(debit_ledgers[i])
             debit_ledger = AccountLedger.objects.get(pk=debit_ledger_id)
@@ -2983,7 +2060,7 @@ class JournalEntryUpdateView(IsAdminMixin, View):
             debit_ledger_type = debit_ledger.account_chart.account_type
             
             # Check if there is an existing entry for this ledger, if so, update it, otherwise, create a new one
-            existing_entry = existing_debit_entries.filter(ledger=debit_ledger).first()
+            existing_entry = existing_debit_entriess.filter(ledger=debit_ledger).first()
             if existing_entry:
                 existing_entry.particulars = debit_particular
                 existing_entry.debit_amount = debit_amount
@@ -3013,12 +2090,16 @@ class JournalEntryUpdateView(IsAdminMixin, View):
                     subledger.total_value -= debit_amount
                     subledger.save()
 
-        # Delete any existing entries that are no longer present in the form
-        existing_credit_entries.exclude(ledger__id__in=credit_ledgers).delete()
-        existing_debit_entries.exclude(ledger__id__in=debit_ledgers).delete()
 
+        existing_debit_entriess.exclude(ledger__id__in=debit_ledgers).delete()
+
+        # Update journal entry data
+        journal_entry.employee_name = request.user.username
+        journal_entry.journal_total = debit_sum
+        # journal_entry.entry_date = entry_date
+        # journal_entry.narration = narration
+        journal_entry.save()
         return redirect('journal_list')
-
 
 from django.shortcuts import redirect
 from django.views.generic import View

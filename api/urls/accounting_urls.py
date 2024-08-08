@@ -1,6 +1,6 @@
 from ..views.accounting import update_account_type ,update_account_group, update_account_ledger, update_account_subledger,\
     ChartOfAccountAPIView, JournalEntryAPIView, TrialBalanceAPIView, ProfitAndLossAPIView, BalanceSheetAPIView, get_depreciation_pool,\
-    LedgersAPIView, SubLedgersAPI, SundryLedgersAPI
+    LedgersAPIView, SubLedgersAPI, SundryLedgersAPI, ExpenseSubLedgersAPI
 
 from django.urls import path
 
@@ -21,6 +21,7 @@ urlpatterns = [
     path('get-ledgers', LedgersAPIView.as_view(), name="ledgers=list" ),
 
     path('get-subledgers/', SubLedgersAPI.as_view(), name="subledgers-list"),
+    path('get-expense-subledgers/', ExpenseSubLedgersAPI.as_view(), name="expense-subledgers-list"),
 
     path('get-sundryledgers/', SundryLedgersAPI.as_view(), name = 'sundryledgers-list' )
 

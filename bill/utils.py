@@ -1,8 +1,41 @@
-from accounting.models import AccountChart, AccountLedger, TblCrJournalEntry, TblJournalEntry, TblDrJournalEntry
+from accounting.models import AccountChart, AccountLedger, TblCrJournalEntry, TblJournalEntry, TblDrJournalEntry, CumulativeLedger
 from accounting.models import AccountSubLedger, AccountLedger, AccountChart
 from purchase.models import AccountProductTracking
 from decimal import Decimal
 from product.models import Product
+
+"""
+Signal to update Cumulative Ledger
+"""
+from datetime import date
+def update_cumulative_ledger_bill(instance):
+    ledger = CumulativeLedger.objects.filter(ledger=instance).last()
+    value_changed = instance.total_value - ledger.total_value
+    if instance.account_chart.account_type in ['Asset', 'Expense']:
+        if value_changed > 0:
+                CumulativeLedger.objects.create(account_chart=instance.account_chart, ledger_name=instance.ledger_name, total_value=instance.total_value, value_changed=value_changed, debit_amount=abs(value_changed), ledger=instance)
+        else:
+            CumulativeLedger.objects.create(account_chart=instance.account_chart, ledger_name=instance.ledger_name, total_value=instance.total_value, value_changed=value_changed, credit_amount=abs(value_changed), ledger=instance)
+    else:
+        if value_changed > 0:
+            CumulativeLedger.objects.create(account_chart=instance.account_chart, ledger_name=instance.ledger_name, total_value=instance.total_value, value_changed=value_changed, credit_amount=abs(value_changed), ledger=instance)
+        else:
+            CumulativeLedger.objects.create(account_chart=instance.account_chart, ledger_name=instance.ledger_name, total_value=instance.total_value, value_changed=value_changed, debit_amount=abs(value_changed), ledger=instance)
+
+def create_cumulative_ledger_bill(instance):
+    if instance.account_chart.account_type in ['Asset', 'Expense']:
+        CumulativeLedger.objects.create(account_chart=instance.account_chart, ledger_name=instance.ledger_name, total_value=instance.total_value, value_changed=instance.total_value, ledger=instance, debit_amount=instance.total_value)
+    else:
+        CumulativeLedger.objects.create(account_chart=instance.account_chart, ledger_name=instance.ledger_name, total_value=instance.total_value, value_changed=instance.total_value, ledger=instance, credit_amount=instance.total_value)
+    if instance.account_chart.group == "Sundry Debtors":
+        journal = TblJournalEntry.objects.create(employee_name=f"From Debtors form {instance.ledger_name}", journal_total=instance.total_value)
+        TblDrJournalEntry.objects.create(ledger=instance, debit_amount=instance.total_value, particulars=f"Automatic: {instance.ledger_name} a/c Dr", journal_entry=journal)
+
+
+    if instance.account_chart.group == "Sundry Creditors":
+        journal = TblJournalEntry.objects.create(employee_name=f"From Creditors form {instance.ledger_name}", journal_total=instance.total_value)
+        TblCrJournalEntry.objects.create(ledger=instance, credit_amount=instance.total_value, particulars=f"Automatic: To {instance.ledger_name}", journal_entry=journal)
+
 
 
 def create_journal_for_complimentary(instance):
@@ -44,15 +77,18 @@ def create_journal_for_bill(instance):
         
         discount_expenses.total_value += discount_amount
         discount_expenses.save()
-
+        update_cumulative_ledger_bill(discount_expenses)
         discount_sales.total_value += discount_amount
         discount_sales.save()
+        update_cumulative_ledger_bill(discount_sales)
 
 
     if tax_amount > 0:
         vat_payable = AccountLedger.objects.get(ledger_name='VAT Payable')
         vat_payable.total_value = vat_payable.total_value + tax_amount
         vat_payable.save()
+        update_cumulative_ledger_bill(vat_payable)
+
         TblCrJournalEntry.objects.create(journal_entry=journal_entry, particulars=f"To VAT Payable", ledger=vat_payable, credit_amount=tax_amount)
 
     if payment_mode == 'credit':
@@ -61,8 +97,11 @@ def create_journal_for_bill(instance):
             dr_ledger = AccountLedger.objects.get(ledger_name=f'{instance.customer.pk} - {instance.customer.name}')
             dr_ledger.total_value += grand_total
             dr_ledger.save()
+            update_cumulative_ledger_bill(dr_ledger)
+
         except AccountLedger.DoesNotExist:
             dr_ledger = AccountLedger.objects.create(ledger_name=f'{instance.customer.pk} - {instance.customer.name}', account_chart=account_chart, total_value=grand_total)
+            create_cumulative_ledger_bill(dr_ledger)
 
         TblDrJournalEntry.objects.create(journal_entry=journal_entry, particulars=f"{instance.customer.name} A/C Dr", ledger=dr_ledger, debit_amount=grand_total)
         TblCrJournalEntry.objects.create(journal_entry=journal_entry, particulars=f"To Sales", ledger=sale_ledger, credit_amount=(grand_total-tax_amount))
@@ -74,7 +113,7 @@ def create_journal_for_bill(instance):
         TblCrJournalEntry.objects.create(journal_entry=journal_entry, particulars=f"To Sales", ledger=sale_ledger, credit_amount=(grand_total-tax_amount))
         card_transaction_ledger.total_value += grand_total
         card_transaction_ledger.save()
-
+        update_cumulative_ledger_bill(card_transaction_ledger)
 
     elif payment_mode == "mobile payment":
         mobile_payment = AccountLedger.objects.get(ledger_name='Mobile Payments')
@@ -83,18 +122,20 @@ def create_journal_for_bill(instance):
         TblCrJournalEntry.objects.create(journal_entry=journal_entry, particulars=f"To Sales", ledger=sale_ledger, credit_amount=(grand_total-tax_amount))
         mobile_payment.total_value += grand_total
         mobile_payment.save()
-
+        update_cumulative_ledger_bill(mobile_payment)
 
     elif payment_mode == "cash":
         cash_ledger = AccountLedger.objects.get(ledger_name='Cash-In-Hand')
         cash_ledger.total_value = cash_ledger.total_value + grand_total
         cash_ledger.save()
+        update_cumulative_ledger_bill(cash_ledger)
 
         TblDrJournalEntry.objects.create(journal_entry=journal_entry, particulars=f"Sales from invoice number {invoice_number} Cash A/C Dr", ledger=cash_ledger, debit_amount=grand_total)
         TblCrJournalEntry.objects.create(journal_entry=journal_entry, particulars=f"To Sales", ledger=sale_ledger, credit_amount=(grand_total-tax_amount))
 
     sale_ledger.total_value += (grand_total-tax_amount)
     sale_ledger.save()
+    update_cumulative_ledger_bill(sale_ledger)
 
 
 def update_subledger_after_updating_product(product_id, initial_name, updated_name):
@@ -102,68 +143,28 @@ def update_subledger_after_updating_product(product_id, initial_name, updated_na
     subledgername = f'{initial_name} ({product.category.title})'
     AccountSubLedger.objects.filter(sub_ledger_name=subledgername).update(sub_ledger_name=f"{updated_name} ({product.category.title})")
     
-
+from accounting.models import AccountSubLedgerTracking
 def product_sold(instance):
     product = instance.product
-    subledgername = f'{product.title} ({product.category.title})'
-    quantity_sold = int(instance.product_quantity)
-    inventory_expenses_ledger, created = AccountLedger.objects.get_or_create(ledger_name='Inventory Expenses')
-    
-    sub, created = AccountSubLedger.objects.get_or_create(sub_ledger_name=subledgername, ledger__account_chart__account_type='Asset')
-
-
-    expenses_subledger, _ = AccountSubLedger.objects.get_or_create(sub_ledger_name=subledgername, ledger=inventory_expenses_ledger)
-    all_products = AccountProductTracking.objects.filter(product=instance.product, remaining_stock__gt=0).order_by('created_at')
-
-    total_amount = 0
-    for product in all_products:
-        if product.remaining_stock >= quantity_sold:
-            
-            if total_amount <=0:
-                product.remaining_stock -= quantity_sold
-                product.save()
-                sub.total_value -= (product.purchase_rate * quantity_sold)
-
-                sub.ledger.total_value -= (product.purchase_rate * quantity_sold)
-                sub.ledger.save()
-
-                expenses_subledger.total_value += (product.purchase_rate * quantity_sold)
-                expenses_subledger.save()
-
-                inventory_expenses_ledger.total_value += (product.purchase_rate * quantity_sold)
-                inventory_expenses_ledger.save()
-                break
-            else:
-                total_amount += (product.purchase_rate * quantity_sold)
-                product.remaining_stock -= quantity_sold
-                product.save()
-                sub.total_value -= total_amount
-
-                sub.ledger.total_value -= total_amount
-                sub.ledger.save()
-
-                expenses_subledger.total_value += total_amount
-                expenses_subledger.save()
-
-                inventory_expenses_ledger.total_value += total_amount
-                inventory_expenses_ledger.save()
-        else:
-            total_amount += product.purchase_rate * product.remaining_stock
-            quantity_sold -= product.remaining_stock
-            product.remaining_stock=0
-            product.save()
-
-    sub.save()
+    subledgername = f'{product.title} ({product.category.title}) - Sale'
     
     sale_ledger = AccountLedger.objects.get(ledger_name='Sales')
     try:
         print("I was in try")        
         sale_subledger = AccountSubLedger.objects.get(sub_ledger_name=subledgername, ledger=sale_ledger)
+        prev_value = sale_subledger.total_value
+        subledgertracking = AccountSubLedgerTracking.objects.create(subledger = sale_subledger, prev_amount= sale_subledger.total_value)
         sale_subledger.total_value += Decimal(instance.amount)
         sale_subledger.save()
+        subledgertracking.new_amount=sale_subledger.total_value
+        subledgertracking.value_changed = sale_subledger.total_value - prev_value
+        subledgertracking.save()
+
+
     except AccountSubLedger.DoesNotExist:
         print("I was in the exception")
-        AccountSubLedger.objects.create(sub_ledger_name=subledgername, ledger=sale_ledger, total_value=Decimal(instance.amount))
+        subledger = AccountSubLedger.objects.create(sub_ledger_name=subledgername, ledger=sale_ledger, total_value=Decimal(instance.amount))
+        subledgertracking = AccountSubLedgerTracking.objects.create(subledger=subledger, new_amount=Decimal(instance.amount), value_changed=Decimal(instance.amount))
 
 
 

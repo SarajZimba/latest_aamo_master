@@ -17,6 +17,7 @@ from bill.views import ExportExcelMixin
 import json
 from django.db.utils import IntegrityError
 from user.permission import IsAdminMixin
+from bill.utils import create_cumulative_ledger_bill, update_cumulative_ledger_bill
 
 class VendorMixin(IsAdminMixin):
     model = Vendor
@@ -50,7 +51,7 @@ class VendorDelete(VendorMixin, DeleteMixin, View):
 '''  -------------------------------------    '''
 
 from django.db.models import Q
-
+from accounting.models import AccountSubLedgerTracking
 class ProductPurchaseCreateView(IsAdminMixin, CreateView):
     model = ProductPurchase
     form_class = ProductPurchaseForm
@@ -58,44 +59,19 @@ class ProductPurchaseCreateView(IsAdminMixin, CreateView):
 
     def create_subledgers(self, product, item_total, debit_account):
         debit_account = get_object_or_404(AccountLedger, pk=int(debit_account))
-        subledgername = f'{product.title} ({product.category.title})'
+        subledgername = f'{product.title} ({product.category.title}) - Purchase'
         try:
             sub = AccountSubLedger.objects.get(sub_ledger_name=subledgername, ledger=debit_account)
+            prev_value = sub.total_value
+            subledgertracking = AccountSubLedgerTracking.objects.create(subledger = sub, prev_amount= prev_value)
             sub.total_value += decimal.Decimal(item_total)
             sub.save()
+            subledgertracking.new_amount=sub.total_value
+            subledgertracking.value_changed = sub.total_value - prev_value
+            subledgertracking.save()
         except AccountSubLedger.DoesNotExist:
-            AccountSubLedger.objects.create(sub_ledger_name=subledgername, ledger=debit_account, total_value=item_total)
-
-    # def create_accounting(self, debit_account_id, payment_mode:str, username:str, sub_total, tax_amount, vendor):
-    #     sub_total = decimal.Decimal(sub_total)
-    #     tax_amount = decimal.Decimal(tax_amount)
-    #     total_amount =  sub_total+ tax_amount
-
-    #     cash_ledger = get_object_or_404(AccountLedger, ledger_name='Cash-In-Hand')
-    #     vat_receivable = get_object_or_404(AccountLedger, ledger_name='VAT Receivable')
-    #     debit_account = get_object_or_404(AccountLedger, pk=int(debit_account_id))
-        
-    #     journal_entry = TblJournalEntry.objects.create(employee_name=username, journal_total = total_amount)
-    #     TblDrJournalEntry.objects.create(journal_entry=journal_entry, particulars=f"Automatic: {debit_account.ledger_name} A/c Dr.", debit_amount=sub_total, ledger=debit_account)
-    #     debit_account.total_value += sub_total
-    #     debit_account.save()
-    #     if tax_amount > 0:
-    #         TblDrJournalEntry.objects.create(journal_entry=journal_entry, particulars="Automatic: VAT Receivable A/c Dr.", debit_amount=tax_amount, ledger=vat_receivable)
-    #         vat_receivable.total_value += tax_amount
-    #         vat_receivable.save()
-    #     if payment_mode.lower().strip() == "credit":
-    #         try:
-    #             vendor_ledger = AccountLedger.objects.get(ledger_name=vendor)
-    #             vendor_ledger.total_value += total_amount
-    #             vendor_ledger.save()
-    #         except AccountLedger.DoesNotExist:
-    #             chart = AccountChart.objects.get(group__iexact='Sundry Creditors')
-    #             vendor_ledger = AccountLedger.objects.create(ledger_name=vendor, total_value=total_amount, is_editable=True, account_chart=chart)
-    #         TblCrJournalEntry.objects.create(journal_entry=journal_entry, particulars=f"Automatic: To {vendor_ledger.ledger_name} A/c", credit_amount=total_amount, ledger=vendor_ledger)
-    #     else:
-    #         TblCrJournalEntry.objects.create(journal_entry=journal_entry, particulars=f"Automatic: To {cash_ledger.ledger_name} A/c", credit_amount=total_amount, ledger=cash_ledger)
-    #         cash_ledger.total_value -= total_amount
-    #         cash_ledger.save()
+            subledger = AccountSubLedger.objects.create(sub_ledger_name=subledgername, ledger=debit_account, total_value=item_total)
+            subledgertracking = AccountSubLedgerTracking.objects.create(subledger=subledger, new_amount=decimal.Decimal(item_total), value_changed=decimal.Decimal(item_total))
 
     def create_accounting_multiple_ledger(self, debit_account_id, payment_mode:str, username:str, sub_total, tax_amount, vendor):
         sub_total = decimal.Decimal(sub_total)
@@ -110,23 +86,28 @@ class ProductPurchaseCreateView(IsAdminMixin, CreateView):
         TblDrJournalEntry.objects.create(journal_entry=journal_entry, particulars=f"Automatic: {debit_account.ledger_name} A/c Dr.", debit_amount=sub_total, ledger=debit_account)
         debit_account.total_value += sub_total
         debit_account.save()
+        update_cumulative_ledger_bill(debit_account)
         if tax_amount > 0:
             TblDrJournalEntry.objects.create(journal_entry=journal_entry, particulars="Automatic: VAT Receivable A/c Dr.", debit_amount=tax_amount, ledger=vat_receivable)
             vat_receivable.total_value += tax_amount
             vat_receivable.save()
+            update_cumulative_ledger_bill(vat_receivable)
         if payment_mode.lower().strip() == "credit":
             try:
                 vendor_ledger = AccountLedger.objects.get(ledger_name=vendor)
                 vendor_ledger.total_value += total_amount
                 vendor_ledger.save()
+                update_cumulative_ledger_bill(vendor_ledger)
             except AccountLedger.DoesNotExist:
                 chart = AccountChart.objects.get(group__iexact='Sundry Creditors')
                 vendor_ledger = AccountLedger.objects.create(ledger_name=vendor, total_value=total_amount, is_editable=True, account_chart=chart)
+                create_cumulative_ledger_bill(vendor_ledger)
             TblCrJournalEntry.objects.create(journal_entry=journal_entry, particulars=f"Automatic: To {vendor_ledger.ledger_name} A/c", credit_amount=total_amount, ledger=vendor_ledger)
         else:
             TblCrJournalEntry.objects.create(journal_entry=journal_entry, particulars=f"Automatic: To {cash_ledger.ledger_name} A/c", credit_amount=total_amount, ledger=cash_ledger)
             cash_ledger.total_value -= total_amount
             cash_ledger.save()
+            update_cumulative_ledger_bill(cash_ledger)
 
     def form_invalid(self, form) -> HttpResponse:
         return self.form_valid(form)
@@ -559,19 +540,35 @@ class AssetPurchaseCreate(IsAdminMixin, CreateView):
 
             try:
                 subled = AccountSubLedger.objects.get(sub_ledger_name=f'{asset.title}', ledger=debit_ledger)
+                prev_value = subled.total_value
+                subledgertracking = AccountSubLedgerTracking.objects.create(subledger = subled, prev_amount= subled.total_value)
+
                 subled.total_value += net_amount
                 subled.save()
+
+                subledgertracking.new_amount=subled.total_value
+                subledgertracking.value_changed = subled.total_value - prev_value
+                subledgertracking.save()
             except AccountSubLedger.DoesNotExist:
-                AccountSubLedger.objects.create(sub_ledger_name=f'{asset.title}', total_value= net_amount, ledger=debit_ledger)
+                subledger = AccountSubLedger.objects.create(sub_ledger_name=f'{asset.title} - Purchase', total_value= net_amount, ledger=debit_ledger)
+                subledgertracking = AccountSubLedgerTracking.objects.create(subledger=subledger, new_amount=decimal.Decimal(net_amount), value_changed=decimal.Decimal(net_amount))
 
             Depreciation.objects.create(item=item_purchased, miti=miti, depreciation_amount=depreciation_amount, net_amount=net_amount, ledger=debit_ledger)
 
             try:
                 sub_led = AccountSubLedger.objects.get(sub_ledger_name=f"{asset.title} Depreciation",ledger=depn_ledger)
+                prev_value = subled.total_value
+                subledgertracking = AccountSubLedgerTracking.objects.create(subledger = subled, prev_amount= subled.total_value)
+
                 sub_led.total_value += depreciation_amount
                 sub_led.save()
+
+                subledgertracking.new_amount=subled.total_value
+                subledgertracking.value_changed = subled.total_value - prev_value
+                subledgertracking.save()
             except AccountSubLedger.DoesNotExist:
-                AccountSubLedger.objects.create(sub_ledger_name=f"{asset.title} Depreciation",ledger=depn_ledger,total_value=depreciation_amount)
+                subledger = AccountSubLedger.objects.create(sub_ledger_name=f"{asset.title} Depreciation",ledger=depn_ledger,total_value=depreciation_amount)
+                subledgertracking = AccountSubLedgerTracking.objects.create(subledger=subledger, new_amount=decimal.Decimal(net_amount), value_changed=decimal.Decimal(net_amount))
 
             depn_ledger.total_value += depreciation_amount
             total_depreciation_amount+= depreciation_amount

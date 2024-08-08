@@ -6,8 +6,15 @@ from organization.models import EndDayDailyReport
 from api.serializers.report import EnddaySerializer, PaymentModeSerializer
 
 class EndDayReportAPIView(APIView):
-    def get(self, request):
+    def post(self, request):
         # Retrieve fromDate and toDate from query parameters
+        data = request.data
+        branch = data.get('branch', None)
+
+        if branch:
+            queryset = EndDayDailyReport.objects.filter(branch__id=int(branch))
+        else:
+            queryset = EndDayDailyReport.objects.all()
         from_date_str = request.GET.get('fromDate')
         to_date_str = request.GET.get('toDate')
 
@@ -19,7 +26,7 @@ class EndDayReportAPIView(APIView):
         if from_date and to_date:
             reports = []
 
-            for report in EndDayDailyReport.objects.all().order_by('created_at'):
+            for report in queryset.order_by('created_at'):
                 report_datetime = datetime.strptime(report.date_time, '%Y-%m-%dT%H:%M:%S.%f')
                 # Check if the report_date falls within the specified range
                 if from_date.date() <= report_datetime.date() <= to_date.date():
@@ -29,7 +36,7 @@ class EndDayReportAPIView(APIView):
 
         else:
             # Retrieve all reports if no date range specified
-            reports = EndDayDailyReport.objects.all().order_by('-created_at')
+            reports = queryset.order_by('-created_at')
 
         serializer = EnddaySerializer(reports, many=True)
 
@@ -337,22 +344,38 @@ class MasterBillDetailView(generics.ListAPIView):
 
             # Serialize the payment_mode_data
             payment_mode_serializer = PaymentModeSerializer(payment_mode_data, many=True)
-            first_bill = None
-            last_bill = None
 
-            for bill in queryset:
-                if not first_bill and bill.invoice_number:
-                    first_bill = bill
-                if bill.invoice_number:
-                    last_bill = bill
+            terminals = Terminal.objects.filter(status=True, is_deleted=False)
 
-            # If no bill with a non-null invoice number is found for the last bill, use the last bill
-            if last_bill is None:
-                last_bill = queryset.last()
+            terminalwisestartend_list = []
 
-            starting_from_invoice = first_bill.invoice_number if first_bill else None
-            ending_from_invoice = last_bill.invoice_number if last_bill else None
+            for terminal in terminals:
 
+                startend_queryset = Bill.objects.filter( status=True, branch=branch,transaction_date__gte=from_date,
+                                            transaction_date__lte=to_date, terminal=terminal.terminal_no)
+                first_bill = None
+                last_bill = None
+
+                for bill in startend_queryset:
+                    if not first_bill and bill.invoice_number:
+                        first_bill = bill
+                    if bill.invoice_number:
+                        last_bill = bill
+
+                # If no bill with a non-null invoice number is found for the last bill, use the last bill
+                if last_bill is None:
+                    last_bill = startend_queryset.last()
+
+                starting_from_invoice = first_bill.invoice_number if first_bill else None
+                ending_from_invoice = last_bill.invoice_number if last_bill else None
+                if startend_queryset:
+                    terminalwise_startend_dict = {
+                        "terminal": terminal.terminal_no,
+                        "Starting_from":starting_from_invoice,
+                        "Ending_from": ending_from_invoice
+                    }
+
+                    terminalwisestartend_list.append(terminalwise_startend_dict)
             
             sub_total_sum = Decimal(0)
             discount_amount_sum = Decimal(0)
@@ -379,8 +402,9 @@ class MasterBillDetailView(generics.ListAPIView):
                 'branch': branch.name,
                 'branch_id':branch.id,
                 "payment_modes": payment_mode_serializer.data,
-                "Starting_from":starting_from_invoice,
-                "Ending_from":ending_from_invoice,
+                # "Starting_from":starting_from_invoice,
+                # "Ending_from":ending_from_invoice,
+                "startend": terminalwisestartend_list
                 # "bill_items_total": bill_items_total,
             }
 
@@ -394,61 +418,6 @@ class MasterBillDetailView(generics.ListAPIView):
                 'service_charge': service_charge_sum,
             }
             response_data['Sales'] = sales_data
-
-            # Add void bills data to the response
-            # response_data['void_bills'] = void_bills_data
-            
-            # food_queryset = queryset.filter(
-            #     is_end_day=False,
-            #     bill_items__product_title__in=Product.objects.filter(type__title="FOOD").values_list('title', flat=True)
-            # ) 
-
-            # # print(f"food_queryset {food_queryset}")
-            # food_total = food_queryset.aggregate(food_total=Sum('bill_items__amount'))['food_total'] or Decimal(0.0)
-            # food_quantity = food_queryset.aggregate(food_quantity=Sum('bill_items__product_quantity'))['food_quantity'] or Decimal(0.0)
-
-            # total_food_items += food_quantity
-
-            # # Get the total amount of beverage products
-            # beverage_queryset = queryset.filter(
-            #     is_end_day=False,
-            #     bill_items__product_title__in=Product.objects.filter(type__title="BEVERAGE").values_list('title', flat=True)
-            # )
-
-            # beverage_total = beverage_queryset.aggregate(beverage_total=Sum('bill_items__amount'))['beverage_total'] or Decimal(0.0)
-
-            # beverage_quantity = beverage_queryset.aggregate(beverage_quantity=Sum('bill_items__product_quantity'))['beverage_quantity'] or Decimal(0.0)
-            # total_beverage_items += beverage_quantity
-
-            # others_queryset = queryset.filter(
-            #     is_end_day=False,
-            #     bill_items__product_title__in=Product.objects.filter(type__title="OTHERS").values_list('title', flat=True)
-            # )
-
-            # others_total = others_queryset.aggregate(others_total=Sum('bill_items__amount'))['others_total'] or Decimal(0.0)
-
-            # others_quantity = others_queryset.aggregate(others_quantity=Sum('bill_items__product_quantity'))['others_quantity'] or Decimal(0.0)
-            # total_others_items += others_quantity
-
-
-            # food_total = queryset.filter(
-            #     is_end_day=False,
-            #     bill_items__product_title__in=Product.objects.filter(type__title="FOOD").values_list('title', flat=True)
-            # ) .aggregate(food_total=Sum('bill_items__amount'))['food_total'] or Decimal(0.0)
-
-
-            # # Get the total amount of beverage products
-            # beverage_total = queryset.filter(
-            #     is_end_day=False,
-            #     bill_items__product_title__in=Product.objects.filter(type__title="BEVERAGE").values_list('title', flat=True)
-            # ).aggregate(beverage_total=Sum('bill_items__amount'))['beverage_total'] or Decimal(0.0)
-
-            # # Get the total amount of other products
-            # others_total = queryset.filter(
-            #     is_end_day=False,
-            #     bill_items__product_title__in=Product.objects.filter(type__title="OTHERS").values_list('title', flat=True)
-            # ).aggregate(others_total=Sum('bill_items__amount'))['others_total'] or Decimal(0.0)
-            
             total_items = queryset.filter(
                 is_end_day=False
             ).aggregate(items_total=Sum('bill_items__product_quantity'))['items_total'] or 0
@@ -599,55 +568,118 @@ class BillDetailView(generics.ListAPIView):
         void_bills_data = queryset.filter(status=False).values('invoice_number', 'grand_total')
 
         # Serialize the payment_mode_data
-        payment_mode_serializer = PaymentModeSerializer(payment_mode_data, many=True)
-        first_bill = None
-        last_bill = None
+        # payment_mode_serializer = PaymentModeSerializer(payment_mode_data, many=True)
+        # first_bill = None
+        # last_bill = None
 
-        for bill in queryset:
-            if not first_bill and bill.invoice_number:
-                first_bill = bill
-            if bill.invoice_number:
-                last_bill = bill
+        # for bill in queryset:
+        #     if not first_bill and bill.invoice_number:
+        #         first_bill = bill
+        #     if bill.invoice_number:
+        #         last_bill = bill
 
-        # If no bill with a non-null invoice number is found for the last bill, use the last bill
-        if last_bill is None:
-            last_bill = queryset.last()
+        # # If no bill with a non-null invoice number is found for the last bill, use the last bill
+        # if last_bill is None:
+        #     last_bill = queryset.last()
 
-        starting_from_invoice = first_bill.invoice_number if first_bill else None
-        ending_from_invoice = last_bill.invoice_number if last_bill else None
+        # starting_from_invoice = first_bill.invoice_number if first_bill else None
+        # ending_from_invoice = last_bill.invoice_number if last_bill else None
 
         
-        sub_total_sum = Decimal(0)
-        discount_amount_sum = Decimal(0)
-        taxable_amount_sum = Decimal(0)
-        tax_amount_sum = Decimal(0)
-        grand_total_sum = Decimal(0)
-        service_charge_sum = Decimal(0)
+        # sub_total_sum = Decimal(0)
+        # discount_amount_sum = Decimal(0)
+        # taxable_amount_sum = Decimal(0)
+        # tax_amount_sum = Decimal(0)
+        # grand_total_sum = Decimal(0)
+        # service_charge_sum = Decimal(0)
 
-        for bill in queryset1:
-            if bill.payment_mode != 'COMPLIMENTARY':
-                sub_total_sum += bill.sub_total
-                discount_amount_sum += bill.discount_amount
-                taxable_amount_sum += bill.taxable_amount
-                tax_amount_sum += bill.tax_amount
-                grand_total_sum += bill.grand_total
-                service_charge_sum += bill.service_charge
-        bill_items_total = self.calculate_bill_items_total(queryset1)
+        # for bill in queryset1:
+        #     if bill.payment_mode != 'COMPLIMENTARY':
+        #         sub_total_sum += bill.sub_total
+        #         discount_amount_sum += bill.discount_amount
+        #         taxable_amount_sum += bill.taxable_amount
+        #         tax_amount_sum += bill.tax_amount
+        #         grand_total_sum += bill.grand_total
+        #         service_charge_sum += bill.service_charge
+        # bill_items_total = self.calculate_bill_items_total(queryset1)
 
-        serializer = self.get_serializer(queryset, many=True)
+        # serializer = self.get_serializer(queryset, many=True)
 
-        # Create a response dictionary with "bill_data" key
-        response_data = {
-            "fromDate": from_date_str,
-            "toDate": to_date_str,
-            "bill_data": serializer.data,
-            "payment_modes": payment_mode_serializer.data,
-            "Starting_from":starting_from_invoice,
-            "Ending_from":ending_from_invoice,
-            "bill_items_total": bill_items_total,
+        # # Create a response dictionary with "bill_data" key
+        # response_data = {
+        #     "fromDate": from_date_str,
+        #     "toDate": to_date_str,
+        #     "bill_data": serializer.data,
+        #     "payment_modes": payment_mode_serializer.data,
+        #     "Starting_from":starting_from_invoice,
+        #     "Ending_from":ending_from_invoice,
+        #     "bill_items_total": bill_items_total,
 
-        }
+        # }
+        payment_mode_serializer = PaymentModeSerializer(payment_mode_data, many=True)
 
+        terminals = Terminal.objects.filter(status=True, is_deleted=False)
+
+        terminalwisestartend_list = []
+
+        for terminal in terminals:
+
+            startend_queryset = Bill.objects.filter( status=True, branch=branch,transaction_date__gte=from_date,
+                                            transaction_date__lte=to_date, terminal=terminal.terminal_no)
+            first_bill = None
+            last_bill = None
+
+            for bill in startend_queryset:
+                if not first_bill and bill.invoice_number:
+                    first_bill = bill
+                if bill.invoice_number:
+                    last_bill = bill
+
+                # If no bill with a non-null invoice number is found for the last bill, use the last bill
+            if last_bill is None:
+                last_bill = startend_queryset.last()
+
+            starting_from_invoice = first_bill.invoice_number if first_bill else None
+            ending_from_invoice = last_bill.invoice_number if last_bill else None
+            if startend_queryset:
+                terminalwise_startend_dict = {
+                    "terminal": terminal.terminal_no,
+                    "Starting_from":starting_from_invoice,
+                    "Ending_from": ending_from_invoice
+                }
+
+                terminalwisestartend_list.append(terminalwise_startend_dict)
+            
+            sub_total_sum = Decimal(0)
+            discount_amount_sum = Decimal(0)
+            taxable_amount_sum = Decimal(0)
+            tax_amount_sum = Decimal(0)
+            grand_total_sum = Decimal(0)
+            service_charge_sum = Decimal(0)
+
+            for bill in queryset1:
+                if bill.payment_mode != 'COMPLIMENTARY':
+                    sub_total_sum += bill.sub_total
+                    discount_amount_sum += bill.discount_amount
+                    taxable_amount_sum += bill.taxable_amount
+                    tax_amount_sum += bill.tax_amount
+                    grand_total_sum += bill.grand_total
+                    service_charge_sum += bill.service_charge
+            # bill_items_total = self.calculate_bill_items_total(queryset)
+
+            serializer = self.get_serializer(queryset, many=True)
+
+            # Create a response dictionary with "bill_data" key
+            response_data = {
+                # "bill_data": serializer.data,
+                'branch': branch.name,
+                'branch_id':branch.id,
+                "payment_modes": payment_mode_serializer.data,
+                # "Starting_from":starting_from_invoice,
+                # "Ending_from":ending_from_invoice,
+                "startend": terminalwisestartend_list
+                # "bill_items_total": bill_items_total,
+            }
 
         # Calculate and add the sales data to the response
         sales_data = {
