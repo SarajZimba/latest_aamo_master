@@ -121,12 +121,39 @@
 //     return true;
 //   }
 
+function validateForm() {
+    let isValid = true;
+    let invalidLedgers = [];
+
+    $('#bill_item tr').each(function() {
+        const productId = $(this).attr('id').split('_').pop();
+        const ledgerSelect = $(this).find('select[id^="ledger_select_"]');
+        const selectedLedgerId = ledgerSelect.val();
+        if (selectedLedgerId === '------' || !selectedLedgerId) {
+            isValid = false;
+            invalidLedgers.push(productId);
+        }
+    });
+
+    if (!isValid) {
+        alert("Please select a valid ledger for all products.");
+        return false;
+    }
+    return true;
+}
+
+
 document.addEventListener("DOMContentLoaded", function () {
     const form = document.querySelector("form[name='purchase_form']");
     const submitButton = document.getElementById("submit-button");
 
     form.addEventListener("submit", function () {
-      submitButton.disabled = true;
+      // submitButton.disabled = true;
+      if (!validateForm()) {
+            event.preventDefault(); // Prevent form submission
+        } else {
+            submitButton.disabled = true; // Disable submit button if validation passes
+        }
     });
   });
 
